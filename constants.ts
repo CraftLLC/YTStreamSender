@@ -1,6 +1,7 @@
 export const STORAGE_KEYS = {
   CONFIG: 'yt_sender_config',
-  MESSAGES: 'yt_sender_messages'
+  MESSAGES: 'yt_sender_messages',
+  ACCESS_TOKEN: 'yt_sender_access_token'
 };
 
 export const MAX_MESSAGES = 5;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppConfig } from '../types';
-import { Key, Link as LinkIcon, Save, AlertCircle, PlayCircle, ShieldCheck, LogIn, Check } from 'lucide-react';
+import { Key, Link as LinkIcon, Save, AlertCircle, PlayCircle, ShieldCheck, LogIn, Check, ChevronDown, ChevronRight, LogOut } from 'lucide-react';
 
 interface SettingsPanelProps {
   config: AppConfig;
@@ -8,6 +8,8 @@ interface SettingsPanelProps {
   // Auth
   onAuthorize: () => void;
   isAuthorized: boolean;
+  accessToken: string;
+  onAccessTokenChange: (token: string) => void;
   // Connection
   onConnect: () => void;
   isConnected: boolean;
@@ -19,8 +21,10 @@ interface SettingsPanelProps {
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ 
   config, 
   onSave, 
-  onAuthorize,
+  onAuthorize, 
   isAuthorized,
+  accessToken,
+  onAccessTokenChange,
   onConnect,
   isConnected, 
   streamTitle, 
@@ -29,6 +33,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 }) => {
   const [localConfig, setLocalConfig] = useState<AppConfig>(config);
   const [isDirty, setIsDirty] = useState(false);
+  const [showManualToken, setShowManualToken] = useState(false);
 
   // Sync local config if parent config changes (e.g. initial load)
   useEffect(() => {
@@ -71,20 +76,29 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
         {/* Authorization Status / Button */}
         <div className="p-4 bg-slate-900/50 rounded-lg border border-slate-700">
-           <div className="flex justify-between items-center">
+           <div className="flex justify-between items-center mb-2">
              <div>
                <label className="block text-sm font-medium text-white mb-1">Авторизація</label>
                <p className="text-xs text-slate-400">
                  {isAuthorized 
-                   ? 'Токен доступу отримано' 
+                   ? 'Токен доступу збережено' 
                    : 'Необхідно увійти в Google обліковий запис'}
                </p>
              </div>
              
              {isAuthorized ? (
-               <div className="flex items-center gap-2 px-3 py-1.5 bg-green-900/30 text-green-400 rounded-full border border-green-900/50 text-xs font-medium">
-                 <Check className="w-3.5 h-3.5" />
-                 Authorized
+               <div className="flex items-center gap-2">
+                 <div className="flex items-center gap-2 px-3 py-1.5 bg-green-900/30 text-green-400 rounded-full border border-green-900/50 text-xs font-medium">
+                   <Check className="w-3.5 h-3.5" />
+                   Authorized
+                 </div>
+                 <button
+                    onClick={() => onAccessTokenChange('')}
+                    className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded transition-colors"
+                    title="Вийти (скинути токен)"
+                 >
+                    <LogOut className="w-4 h-4" />
+                 </button>
                </div>
              ) : (
                <button
@@ -97,6 +111,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                </button>
              )}
            </div>
+           
            {!config.clientId && (
              <p className="text-xs text-amber-500 mt-2">
                ⚠️ Спочатку введіть та збережіть Client ID.
@@ -107,6 +122,34 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                ⚠️ Збережіть зміни перед авторизацією.
              </p>
            )}
+
+           {/* Manual Token Fallback */}
+           <div className="mt-4 pt-3 border-t border-slate-700/50">
+             <button 
+                onClick={() => setShowManualToken(!showManualToken)}
+                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+             >
+                {showManualToken ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                Проблеми з входом? Ввести токен вручну
+             </button>
+             
+             {showManualToken && (
+               <div className="mt-2 animate-in fade-in slide-in-from-top-1">
+                 <input
+                   type="password"
+                   value={accessToken}
+                   onChange={(e) => onAccessTokenChange(e.target.value)}
+                   placeholder="Вставте Access Token (Bearer)..."
+                   className="w-full bg-slate-800 border border-slate-600 rounded py-1.5 px-3 text-xs text-white focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-slate-600 font-mono"
+                 />
+                 <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
+                   Якщо автоматичний вхід видає помилку "redirect_uri" (через особливості середовища запуску), згенеруйте токен в <a href="https://developers.google.com/oauthplayground/" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">Google OAuth Playground</a>.
+                   <br/>
+                   Оберіть scope: <code className="bg-slate-800 px-1 py-0.5 rounded text-slate-400">youtube.force-ssl</code>
+                 </p>
+               </div>
+             )}
+           </div>
         </div>
 
         {/* Stream URL */}

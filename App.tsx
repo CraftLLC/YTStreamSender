@@ -32,10 +32,21 @@ const App: React.FC = () => {
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [messageStates, setMessageStates] = useState<Record<number, MessageState>>({});
 
+  // Helper to persist token
+  const updateAccessToken = (token: string) => {
+    setAccessToken(token);
+    if (token) {
+      localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, token);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+    }
+  };
+
   // Load from local storage on mount
   useEffect(() => {
     const storedConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
     const storedMessages = localStorage.getItem(STORAGE_KEYS.MESSAGES);
+    const storedToken = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
 
     if (storedConfig) {
       const parsedConfig = JSON.parse(storedConfig);
@@ -47,6 +58,9 @@ const App: React.FC = () => {
     }
     if (storedMessages) {
       setMessages(JSON.parse(storedMessages));
+    }
+    if (storedToken) {
+      setAccessToken(storedToken);
     }
   }, []);
 
@@ -79,7 +93,7 @@ const App: React.FC = () => {
         scope: 'https://www.googleapis.com/auth/youtube.force-ssl',
         callback: (response: any) => {
           if (response.access_token) {
-            setAccessToken(response.access_token);
+            updateAccessToken(response.access_token);
             setConnectionError(null);
           } else {
             setConnectionError("Не вдалося отримати токен доступу.");
@@ -191,6 +205,8 @@ const App: React.FC = () => {
                 onSave={handleSaveConfig}
                 onAuthorize={handleAuthorize}
                 isAuthorized={!!accessToken}
+                accessToken={accessToken}
+                onAccessTokenChange={updateAccessToken}
                 isConnected={!!liveDetails?.liveChatId}
                 streamTitle={liveDetails?.title || null}
                 connectionError={connectionError}
@@ -202,7 +218,8 @@ const App: React.FC = () => {
                 <h3 className="font-semibold text-slate-300 mb-2">Інструкція:</h3>
                 <ol className="list-decimal list-inside space-y-2">
                     <li>Введіть та збережіть <strong>Client ID</strong>.</li>
-                    <li>Натисніть <strong>"Увійти через Google"</strong> та надайте доступ.</li>
+                    <li>Натисніть <strong>"Увійти через Google"</strong> (токен збережеться).</li>
+                    <li>Якщо виникає помилка (400 invalid_request), розгорніть "Ввести токен вручну" і скористайтеся <a href="https://developers.google.com/oauthplayground/" target="_blank" className="text-blue-400 hover:underline">Playground</a>.</li>
                     <li>Вставте посилання на пряму трансляцію.</li>
                     <li>Натисніть <strong>"Знайти чат"</strong>.</li>
                     <li>Пишіть повідомлення та надсилайте їх в один клік.</li>
