@@ -1,5 +1,6 @@
 export interface AppConfig {
   clientId: string;
+  clientSecret: string;
   streamUrl: string;
 }
 

@@ -1,7 +1,8 @@
 export const STORAGE_KEYS = {
   CONFIG: 'yt_sender_config',
   MESSAGES: 'yt_sender_messages',
-  ACCESS_TOKEN: 'yt_sender_access_token'
+  ACCESS_TOKEN: 'yt_sender_access_token',
+  REFRESH_TOKEN: 'yt_sender_refresh_token'
 };
 
 export const DEFAULT_MESSAGES = [

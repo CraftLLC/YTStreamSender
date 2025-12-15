@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppConfig } from '../types';
-import { Key, Link as LinkIcon, Save, AlertCircle, PlayCircle, ShieldCheck, LogIn, Check, ChevronDown, ChevronRight, LogOut } from 'lucide-react';
+import { Key, Link as LinkIcon, Save, AlertCircle, PlayCircle, ShieldCheck, LogIn, Check, ChevronDown, ChevronRight, LogOut, RefreshCw, Lock } from 'lucide-react';
 
 interface SettingsPanelProps {
   config: AppConfig;
@@ -9,7 +9,10 @@ interface SettingsPanelProps {
   onAuthorize: () => void;
   isAuthorized: boolean;
   accessToken: string;
+  refreshToken: string;
   onAccessTokenChange: (token: string) => void;
+  onRefreshTokenChange: (token: string) => void;
+  onRefreshAuth: () => Promise<void>;
   // Connection
   onConnect: () => void;
   isConnected: boolean;
@@ -24,7 +27,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onAuthorize, 
   isAuthorized,
   accessToken,
+  refreshToken,
   onAccessTokenChange,
+  onRefreshTokenChange,
+  onRefreshAuth,
   onConnect,
   isConnected, 
   streamTitle, 
@@ -34,6 +40,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [localConfig, setLocalConfig] = useState<AppConfig>(config);
   const [isDirty, setIsDirty] = useState(false);
   const [showManualToken, setShowManualToken] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Sync local config if parent config changes (e.g. initial load)
   useEffect(() => {
@@ -51,6 +58,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     setIsDirty(false);
   };
 
+  const handleRefreshClick = async () => {
+    setIsRefreshing(true);
+    try {
+      await onRefreshAuth();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   return (
     <div className="bg-slate-800 rounded-xl p-6 shadow-lg border border-slate-700">
       <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-white">
@@ -59,19 +75,39 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       </h2>
       
       <div className="space-y-5">
-        {/* Client ID */}
-        <div>
-          <label className="block text-sm font-medium text-slate-400 mb-1">Google Client ID</label>
-          <div className="relative">
-            <input
-              type="text"
-              value={localConfig.clientId}
-              onChange={(e) => handleChange('clientId', e.target.value)}
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg py-2 pl-3 pr-10 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none placeholder-slate-600"
-              placeholder="YOUR_CLIENT_ID.apps.googleusercontent.com"
-            />
-          </div>
-          <p className="text-xs text-slate-500 mt-1">Збережіть Client ID перед авторизацією.</p>
+        {/* Credentials Group */}
+        <div className="space-y-3">
+            {/* Client ID */}
+            <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1">Google Client ID</label>
+            <div className="relative">
+                <input
+                type="text"
+                value={localConfig.clientId}
+                onChange={(e) => handleChange('clientId', e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg py-2 pl-3 pr-10 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none placeholder-slate-600"
+                placeholder="YOUR_CLIENT_ID.apps.googleusercontent.com"
+                />
+            </div>
+            </div>
+
+            {/* Client Secret */}
+            <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1 flex items-center gap-2">
+                Google Client Secret
+                <span className="text-[10px] bg-slate-700 px-1.5 py-0.5 rounded text-slate-300">Опціонально (для Refresh)</span>
+            </label>
+            <div className="relative">
+                <input
+                type="password"
+                value={localConfig.clientSecret || ''}
+                onChange={(e) => handleChange('clientSecret', e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg py-2 pl-9 pr-3 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none placeholder-slate-600"
+                placeholder="Введіть Client Secret"
+                />
+                <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+            </div>
+            </div>
         </div>
 
         {/* Authorization Status / Button */}
@@ -81,8 +117,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                <label className="block text-sm font-medium text-white mb-1">Авторизація</label>
                <p className="text-xs text-slate-400">
                  {isAuthorized 
-                   ? 'Токен доступу збережено' 
-                   : 'Необхідно увійти в Google обліковий запис'}
+                   ? 'Токен доступу активний' 
+                   : 'Необхідно увійти'}
                </p>
              </div>
              
@@ -90,8 +126,20 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                <div className="flex items-center gap-2">
                  <div className="flex items-center gap-2 px-3 py-1.5 bg-green-900/30 text-green-400 rounded-full border border-green-900/50 text-xs font-medium">
                    <Check className="w-3.5 h-3.5" />
-                   Authorized
+                   OK
                  </div>
+                 
+                 {refreshToken && localConfig.clientSecret && (
+                     <button
+                        onClick={handleRefreshClick}
+                        disabled={isRefreshing}
+                        className={`p-1.5 text-slate-400 hover:text-blue-400 hover:bg-blue-400/10 rounded transition-colors ${isRefreshing ? 'animate-spin text-blue-400' : ''}`}
+                        title="Оновити Access Token через Refresh Token"
+                     >
+                        <RefreshCw className="w-4 h-4" />
+                     </button>
+                 )}
+
                  <button
                     onClick={() => onAccessTokenChange('')}
                     className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded transition-colors"
@@ -117,36 +165,48 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                ⚠️ Спочатку введіть та збережіть Client ID.
              </p>
            )}
-           {isDirty && config.clientId && (
+           {isDirty && (
              <p className="text-xs text-amber-500 mt-2">
-               ⚠️ Збережіть зміни перед авторизацією.
+               ⚠️ Збережіть налаштування перед діями.
              </p>
            )}
 
-           {/* Manual Token Fallback */}
+           {/* Manual Token / Advanced Auth */}
            <div className="mt-4 pt-3 border-t border-slate-700/50">
              <button 
                 onClick={() => setShowManualToken(!showManualToken)}
                 className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors"
              >
                 {showManualToken ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                Проблеми з входом? Ввести токен вручну
+                Розширені налаштування токенів (Manual / Refresh)
              </button>
              
              {showManualToken && (
-               <div className="mt-2 animate-in fade-in slide-in-from-top-1">
-                 <input
-                   type="password"
-                   value={accessToken}
-                   onChange={(e) => onAccessTokenChange(e.target.value)}
-                   placeholder="Вставте Access Token (Bearer)..."
-                   className="w-full bg-slate-800 border border-slate-600 rounded py-1.5 px-3 text-xs text-white focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-slate-600 font-mono"
-                 />
-                 <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
-                   Якщо автоматичний вхід видає помилку "redirect_uri" (через особливості середовища запуску), згенеруйте токен в <a href="https://developers.google.com/oauthplayground/" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">Google OAuth Playground</a>.
-                   <br/>
-                   Оберіть scope: <code className="bg-slate-800 px-1 py-0.5 rounded text-slate-400">youtube.force-ssl</code>
-                 </p>
+               <div className="mt-3 animate-in fade-in slide-in-from-top-1 space-y-3">
+                 <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Access Token</label>
+                    <input
+                        type="password"
+                        value={accessToken}
+                        onChange={(e) => onAccessTokenChange(e.target.value)}
+                        placeholder="Paste Access Token (Bearer)..."
+                        className="w-full bg-slate-800 border border-slate-600 rounded py-1.5 px-3 text-xs text-white focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-slate-600 font-mono"
+                    />
+                 </div>
+                 
+                 <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Refresh Token</label>
+                    <input
+                        type="password"
+                        value={refreshToken}
+                        onChange={(e) => onRefreshTokenChange(e.target.value)}
+                        placeholder="Paste Refresh Token..."
+                        className="w-full bg-slate-800 border border-slate-600 rounded py-1.5 px-3 text-xs text-white focus:ring-1 focus:ring-blue-500 focus:outline-none placeholder-slate-600 font-mono"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1.5">
+                        Для отримання Refresh Token використовуйте <a href="https://developers.google.com/oauthplayground/" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">OAuth Playground</a>. Встановіть <code className="bg-slate-800 px-1 rounded">access_type=offline</code>.
+                    </p>
+                 </div>
                </div>
              )}
            </div>

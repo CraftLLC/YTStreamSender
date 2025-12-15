@@ -90,3 +90,25 @@ export const sendMessageToChat = async (liveChatId: string, messageText: string,
 
   return await response.json();
 };
+
+export const refreshGoogleToken = async (clientId: string, clientSecret: string, refreshToken: string) => {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error_description || 'Не вдалося оновити токен');
+  }
+
+  return await response.json(); // Returns { access_token, expires_in, scope, token_type }
+};

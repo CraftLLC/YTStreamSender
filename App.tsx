@@ -3,7 +3,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { MessageSlot } from './components/MessageSlot';
 import { AppConfig, SavedMessage, MessageState, SendingStatus, LiveStreamDetails } from './types';
 import { STORAGE_KEYS, DEFAULT_MESSAGES } from './constants';
-import { extractVideoId, fetchLiveChatId, sendMessageToChat } from './services/youtubeService';
+import { extractVideoId, fetchLiveChatId, sendMessageToChat, refreshGoogleToken } from './services/youtubeService';
 import { MessageSquare, Zap, Plus, Trash2 } from 'lucide-react';
 
 // Declaration for Google Identity Services
@@ -17,11 +17,13 @@ const App: React.FC = () => {
   // State: Configuration
   const [config, setConfig] = useState<AppConfig>({
     clientId: '',
+    clientSecret: '',
     streamUrl: ''
   });
 
   // State: Auth
   const [accessToken, setAccessToken] = useState<string>('');
+  const [refreshToken, setRefreshToken] = useState<string>('');
   
   // State: Messages
   const [messages, setMessages] = useState<SavedMessage[]>(DEFAULT_MESSAGES);
@@ -32,13 +34,22 @@ const App: React.FC = () => {
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [messageStates, setMessageStates] = useState<Record<number, MessageState>>({});
 
-  // Helper to persist token
+  // Helper to persist tokens
   const updateAccessToken = (token: string) => {
     setAccessToken(token);
     if (token) {
       localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, token);
     } else {
       localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+    }
+  };
+
+  const updateRefreshToken = (token: string) => {
+    setRefreshToken(token);
+    if (token) {
+      localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, token);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
     }
   };
 
@@ -52,20 +63,25 @@ const App: React.FC = () => {
   useEffect(() => {
     const storedConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
     const storedMessages = localStorage.getItem(STORAGE_KEYS.MESSAGES);
-    const storedToken = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+    const storedAccessToken = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+    const storedRefreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
 
     if (storedConfig) {
       const parsedConfig = JSON.parse(storedConfig);
       setConfig({
         clientId: parsedConfig.clientId || '',
+        clientSecret: parsedConfig.clientSecret || '',
         streamUrl: parsedConfig.streamUrl || ''
       });
     }
     if (storedMessages) {
       setMessages(JSON.parse(storedMessages));
     }
-    if (storedToken) {
-      setAccessToken(storedToken);
+    if (storedAccessToken) {
+      setAccessToken(storedAccessToken);
+    }
+    if (storedRefreshToken) {
+      setRefreshToken(storedRefreshToken);
     }
   }, []);
 
@@ -80,7 +96,24 @@ const App: React.FC = () => {
     }
   };
 
-  // Google Auth Handler
+  // Refresh Token Logic
+  const handleRefreshAuth = async () => {
+    if (!refreshToken || !config.clientId || !config.clientSecret) {
+      setConnectionError("Для оновлення потрібні: Client ID, Client Secret та Refresh Token");
+      return;
+    }
+
+    try {
+      const data = await refreshGoogleToken(config.clientId, config.clientSecret, refreshToken);
+      updateAccessToken(data.access_token);
+      setConnectionError(null);
+      // alert("Токен успішно оновлено!"); 
+    } catch (e: any) {
+      setConnectionError("Помилка оновлення токена: " + e.message);
+    }
+  };
+
+  // Google Auth Handler (Implicit Flow)
   const handleAuthorize = () => {
     if (!config.clientId) {
       setConnectionError("Будь ласка, введіть Client ID");
@@ -126,7 +159,7 @@ const App: React.FC = () => {
     }
   };
 
-  // Add Message (Use Timestamp for ID to avoid collisions)
+  // Add Message
   const handleAddMessage = () => {
     const newMessage = { id: Date.now(), text: '', isPinned: false };
     updateMessages([...messages, newMessage]);
@@ -135,7 +168,7 @@ const App: React.FC = () => {
   // Delete Single Message
   const handleDeleteMessage = (id: number) => {
     const msg = messages.find(m => m.id === id);
-    if (msg?.isPinned) return; // Guard against deleting pinned via keyboard shortcuts or bugs
+    if (msg?.isPinned) return; 
     updateMessages(messages.filter(m => m.id !== id));
   };
 
@@ -180,8 +213,6 @@ const App: React.FC = () => {
     try {
         const videoId = extractVideoId(config.streamUrl);
         if (!videoId) {
-            // Instead of erroring immediately, we might want to try passing the raw string if the regex failed,
-            // but the service handles this logic now.
             throw new Error('Не вдалося розпізнати Video ID з посилання');
         }
 
@@ -248,7 +279,10 @@ const App: React.FC = () => {
                 onAuthorize={handleAuthorize}
                 isAuthorized={!!accessToken}
                 accessToken={accessToken}
+                refreshToken={refreshToken}
                 onAccessTokenChange={updateAccessToken}
+                onRefreshTokenChange={updateRefreshToken}
+                onRefreshAuth={handleRefreshAuth}
                 isConnected={!!liveDetails?.liveChatId}
                 streamTitle={liveDetails?.title || null}
                 connectionError={connectionError}
@@ -262,7 +296,9 @@ const App: React.FC = () => {
                     <li>Використовуйте <strong className="text-slate-300">↑ ↓</strong> для зміни порядку.</li>
                     <li>Натисніть <strong className="text-amber-400">📌</strong> щоб закріпити повідомлення.</li>
                     <li>Кнопка "Очистити" видаляє лише незакріплене.</li>
-                    <li>Працює з посиланнями <code className="bg-slate-800 px-1 rounded">/live/</code> та <code className="bg-slate-800 px-1 rounded">/watch?v=</code>.</li>
+                    <li>
+                        Для авто-оновлення токена введіть <strong>Client Secret</strong> та <strong>Refresh Token</strong> (з OAuth Playground).
+                    </li>
                 </ul>
             </div>
         </div>
