@@ -6,6 +6,7 @@ export interface AppConfig {
 export interface SavedMessage {
   id: number;
   text: string;
+  isPinned?: boolean;
 }
 
 export interface LiveStreamDetails {

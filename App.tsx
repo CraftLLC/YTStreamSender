@@ -4,7 +4,7 @@ import { MessageSlot } from './components/MessageSlot';
 import { AppConfig, SavedMessage, MessageState, SendingStatus, LiveStreamDetails } from './types';
 import { STORAGE_KEYS, DEFAULT_MESSAGES } from './constants';
 import { extractVideoId, fetchLiveChatId, sendMessageToChat } from './services/youtubeService';
-import { MessageSquare, Zap, Plus } from 'lucide-react';
+import { MessageSquare, Zap, Plus, Trash2 } from 'lucide-react';
 
 // Declaration for Google Identity Services
 declare global {
@@ -42,6 +42,12 @@ const App: React.FC = () => {
     }
   };
 
+  // Helper to update messages
+  const updateMessages = (newMessages: SavedMessage[]) => {
+      setMessages(newMessages);
+      localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(newMessages));
+  };
+
   // Load from local storage on mount
   useEffect(() => {
     const storedConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
@@ -50,7 +56,6 @@ const App: React.FC = () => {
 
     if (storedConfig) {
       const parsedConfig = JSON.parse(storedConfig);
-      // Ensure we clean up old format if present (remove secret/token from persisted config)
       setConfig({
         clientId: parsedConfig.clientId || '',
         streamUrl: parsedConfig.streamUrl || ''
@@ -106,15 +111,13 @@ const App: React.FC = () => {
     }
   };
 
-  // Update message handler
-  const handleUpdateMessage = (id: number, text: string) => {
+  // Update text
+  const handleUpdateMessageText = (id: number, text: string) => {
     const updatedMessages = messages.map(msg => 
       msg.id === id ? { ...msg, text } : msg
     );
-    setMessages(updatedMessages);
-    localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updatedMessages));
+    updateMessages(updatedMessages);
     
-    // Reset status when user types
     if (messageStates[id]?.status !== SendingStatus.IDLE) {
         setMessageStates(prev => ({
             ...prev,
@@ -123,20 +126,45 @@ const App: React.FC = () => {
     }
   };
 
-  // Add Message Handler
+  // Add Message (Use Timestamp for ID to avoid collisions)
   const handleAddMessage = () => {
-    const newId = messages.length > 0 ? Math.max(...messages.map(m => m.id)) + 1 : 1;
-    const newMessage = { id: newId, text: '' };
-    const updatedMessages = [...messages, newMessage];
-    setMessages(updatedMessages);
-    localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updatedMessages));
+    const newMessage = { id: Date.now(), text: '', isPinned: false };
+    updateMessages([...messages, newMessage]);
   };
 
-  // Delete Message Handler
+  // Delete Single Message
   const handleDeleteMessage = (id: number) => {
-    const updatedMessages = messages.filter(m => m.id !== id);
-    setMessages(updatedMessages);
-    localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updatedMessages));
+    const msg = messages.find(m => m.id === id);
+    if (msg?.isPinned) return; // Guard against deleting pinned via keyboard shortcuts or bugs
+    updateMessages(messages.filter(m => m.id !== id));
+  };
+
+  // Delete All (Except Pinned)
+  const handleDeleteAll = () => {
+      if (window.confirm('Видалити всі незакріплені повідомлення?')) {
+          updateMessages(messages.filter(m => m.isPinned));
+      }
+  };
+
+  // Toggle Pin
+  const handleTogglePin = (id: number) => {
+      const updatedMessages = messages.map(msg => 
+          msg.id === id ? { ...msg, isPinned: !msg.isPinned } : msg
+      );
+      updateMessages(updatedMessages);
+  };
+
+  // Move Message
+  const handleMoveMessage = (index: number, direction: 'up' | 'down') => {
+      if (direction === 'up' && index === 0) return;
+      if (direction === 'down' && index === messages.length - 1) return;
+
+      const newMessages = [...messages];
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      
+      // Swap
+      [newMessages[index], newMessages[targetIndex]] = [newMessages[targetIndex], newMessages[index]];
+      updateMessages(newMessages);
   };
 
   // Connect to Live Stream
@@ -152,7 +180,9 @@ const App: React.FC = () => {
     try {
         const videoId = extractVideoId(config.streamUrl);
         if (!videoId) {
-            throw new Error('Невірний формат посилання на YouTube');
+            // Instead of erroring immediately, we might want to try passing the raw string if the regex failed,
+            // but the service handles this logic now.
+            throw new Error('Не вдалося розпізнати Video ID з посилання');
         }
 
         const details = await fetchLiveChatId(videoId, accessToken);
@@ -170,7 +200,6 @@ const App: React.FC = () => {
   const handleSendMessage = async (id: number, text: string) => {
     if (!liveDetails?.liveChatId || !accessToken) return;
 
-    // Set Sending State
     setMessageStates(prev => ({
         ...prev,
         [id]: { id, status: SendingStatus.SENDING }
@@ -179,13 +208,11 @@ const App: React.FC = () => {
     try {
         await sendMessageToChat(liveDetails.liveChatId, text, accessToken);
         
-        // Set Success State
         setMessageStates(prev => ({
             ...prev,
             [id]: { id, status: SendingStatus.SUCCESS }
         }));
 
-        // Reset to IDLE after 2 seconds
         setTimeout(() => {
             setMessageStates(prev => ({
                 ...prev,
@@ -194,7 +221,6 @@ const App: React.FC = () => {
         }, 2000);
 
     } catch (err: any) {
-        // Set Error State
         setMessageStates(prev => ({
             ...prev,
             [id]: { id, status: SendingStatus.ERROR, errorMessage: err.message }
@@ -231,15 +257,13 @@ const App: React.FC = () => {
             />
 
             <div className="bg-slate-800/50 rounded-xl p-6 border border-slate-700/50 text-sm text-slate-400">
-                <h3 className="font-semibold text-slate-300 mb-2">Інструкція:</h3>
-                <ol className="list-decimal list-inside space-y-2">
-                    <li>Введіть та збережіть <strong>Client ID</strong>.</li>
-                    <li>Натисніть <strong>"Увійти через Google"</strong> (токен збережеться).</li>
-                    <li>Якщо виникає помилка (400 invalid_request), розгорніть "Ввести токен вручну" і скористайтеся <a href="https://developers.google.com/oauthplayground/" target="_blank" className="text-blue-400 hover:underline">Playground</a>.</li>
-                    <li>Вставте посилання на пряму трансляцію.</li>
-                    <li>Натисніть <strong>"Знайти чат"</strong>.</li>
-                    <li>Пишіть повідомлення та надсилайте їх в один клік.</li>
-                </ol>
+                <h3 className="font-semibold text-slate-300 mb-2">Підказки:</h3>
+                <ul className="list-disc list-inside space-y-1.5 text-xs">
+                    <li>Використовуйте <strong className="text-slate-300">↑ ↓</strong> для зміни порядку.</li>
+                    <li>Натисніть <strong className="text-amber-400">📌</strong> щоб закріпити повідомлення.</li>
+                    <li>Кнопка "Очистити" видаляє лише незакріплене.</li>
+                    <li>Працює з посиланнями <code className="bg-slate-800 px-1 rounded">/live/</code> та <code className="bg-slate-800 px-1 rounded">/watch?v=</code>.</li>
+                </ul>
             </div>
         </div>
 
@@ -251,27 +275,42 @@ const App: React.FC = () => {
                         <MessageSquare className="w-5 h-5 text-green-400" />
                         Збережені повідомлення
                     </h2>
-                    <span className="text-xs font-mono px-2 py-1 rounded bg-slate-900 text-slate-500">
-                        Total: {messages.length}
-                    </span>
+                    <div className="flex items-center gap-3">
+                         <span className="text-xs font-mono px-2 py-1 rounded bg-slate-900 text-slate-500">
+                            Count: {messages.length}
+                        </span>
+                        {messages.some(m => !m.isPinned) && messages.length > 0 && (
+                            <button 
+                                onClick={handleDeleteAll}
+                                className="text-xs flex items-center gap-1 text-slate-500 hover:text-red-400 transition-colors"
+                            >
+                                <Trash2 className="w-3 h-3" />
+                                Очистити
+                            </button>
+                        )}
+                    </div>
                 </div>
 
-                <div className="flex-grow overflow-y-auto pr-2 space-y-1 custom-scrollbar">
-                    {messages.map((msg) => (
+                <div className="flex-grow overflow-y-auto pr-1 space-y-1 custom-scrollbar">
+                    {messages.map((msg, index) => (
                         <MessageSlot
                             key={msg.id}
+                            index={index}
+                            total={messages.length}
                             message={msg}
                             state={messageStates[msg.id] || { id: msg.id, status: SendingStatus.IDLE }}
-                            onUpdate={handleUpdateMessage}
+                            onUpdate={handleUpdateMessageText}
                             onSend={handleSendMessage}
                             onDelete={handleDeleteMessage}
+                            onPin={handleTogglePin}
+                            onMove={handleMoveMessage}
                             disabled={!liveDetails?.liveChatId || !accessToken}
                         />
                     ))}
                     
                     {messages.length === 0 && (
-                        <div className="text-center py-8 text-slate-500 italic">
-                            Список повідомлень порожній
+                        <div className="text-center py-12 text-slate-600 border-2 border-dashed border-slate-700/50 rounded-lg">
+                            <p>Список порожній.</p>
                         </div>
                     )}
                 </div>

@@ -1,7 +1,28 @@
 export const extractVideoId = (url: string): string | null => {
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+  if (!url) return null;
+
+  // Pattern covering standard watch, embed, short links, and /live/ URLs
+  const regExp = /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|live\/))([^#&?]+)/;
   const match = url.match(regExp);
-  return (match && match[2].length === 11) ? match[2] : null;
+
+  // If regex matched and length looks like a standard YouTube ID (11 chars), return it
+  if (match && match[1].length === 11) {
+    return match[1];
+  }
+
+  // Fallback: If the user just pasted the ID directly (11 chars)
+  if (url.length === 11 && /^[a-zA-Z0-9_-]+$/.test(url)) {
+    return url;
+  }
+
+  // Loose fallback: try to find any 11-char string in the input if strict parsing fails
+  // This allows "messy" inputs to at least attempt a connection
+  const looseMatch = url.match(/([a-zA-Z0-9_-]{11})/);
+  if (looseMatch) {
+    return looseMatch[1];
+  }
+
+  return null;
 };
 
 export const fetchLiveChatId = async (videoId: string, token: string): Promise<{ liveChatId: string, title: string }> => {
@@ -23,7 +44,7 @@ export const fetchLiveChatId = async (videoId: string, token: string): Promise<{
 
   const data = await response.json();
   if (!data.items || data.items.length === 0) {
-    throw new Error('Відео не знайдено');
+    throw new Error('Відео не знайдено. Перевірте ID або права доступу.');
   }
 
   const item = data.items[0];
