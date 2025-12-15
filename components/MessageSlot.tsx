@@ -1,5 +1,5 @@
 import React from 'react';
-import { Send, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Send, CheckCircle2, AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import { MessageState, SavedMessage, SendingStatus } from '../types';
 
 interface MessageSlotProps {
@@ -7,6 +7,7 @@ interface MessageSlotProps {
   state: MessageState;
   onUpdate: (id: number, text: string) => void;
   onSend: (id: number, text: string) => void;
+  onDelete: (id: number) => void;
   disabled: boolean;
 }
 
@@ -15,6 +16,7 @@ export const MessageSlot: React.FC<MessageSlotProps> = ({
   state, 
   onUpdate, 
   onSend,
+  onDelete,
   disabled
 }) => {
   const isSending = state.status === SendingStatus.SENDING;
@@ -22,14 +24,14 @@ export const MessageSlot: React.FC<MessageSlotProps> = ({
   const isError = state.status === SendingStatus.ERROR;
 
   return (
-    <div className="flex gap-2 items-center mb-3">
+    <div className="flex gap-2 items-center mb-3 group">
         <div className="relative flex-grow">
             <span className="absolute left-3 top-2.5 text-xs font-mono text-slate-500 select-none">#{message.id}</span>
             <input
                 type="text"
                 value={message.text}
                 onChange={(e) => onUpdate(message.id, e.target.value)}
-                placeholder={`Повідомлення ${message.id}`}
+                placeholder={`Повідомлення...`}
                 className={`w-full bg-slate-800 border rounded-lg py-2 pl-10 pr-3 text-sm text-white focus:outline-none transition-all ${
                     isError ? 'border-red-500 focus:ring-2 focus:ring-red-500/50' : 
                     isSuccess ? 'border-green-500 focus:ring-2 focus:ring-green-500/50' :
@@ -41,7 +43,7 @@ export const MessageSlot: React.FC<MessageSlotProps> = ({
         <button
             onClick={() => onSend(message.id, message.text)}
             disabled={disabled || !message.text.trim() || isSending}
-            className={`flex items-center justify-center w-12 h-10 rounded-lg transition-all ${
+            className={`flex items-center justify-center w-12 h-10 rounded-lg transition-all shadow-sm ${
                 isSuccess 
                   ? 'bg-green-600 text-white' 
                   : isError
@@ -59,6 +61,15 @@ export const MessageSlot: React.FC<MessageSlotProps> = ({
             ) : (
                 <Send className="w-4 h-4" />
             )}
+        </button>
+
+        <button
+            onClick={() => onDelete(message.id)}
+            className="flex items-center justify-center w-8 h-10 rounded-lg text-slate-600 hover:text-red-400 hover:bg-slate-800 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+            title="Видалити"
+            tabIndex={-1}
+        >
+            <Trash2 className="w-4 h-4" />
         </button>
     </div>
   );

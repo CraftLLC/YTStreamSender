@@ -4,7 +4,7 @@ import { MessageSlot } from './components/MessageSlot';
 import { AppConfig, SavedMessage, MessageState, SendingStatus, LiveStreamDetails } from './types';
 import { STORAGE_KEYS, DEFAULT_MESSAGES } from './constants';
 import { extractVideoId, fetchLiveChatId, sendMessageToChat } from './services/youtubeService';
-import { MessageSquare, Zap } from 'lucide-react';
+import { MessageSquare, Zap, Plus } from 'lucide-react';
 
 // Declaration for Google Identity Services
 declare global {
@@ -123,6 +123,22 @@ const App: React.FC = () => {
     }
   };
 
+  // Add Message Handler
+  const handleAddMessage = () => {
+    const newId = messages.length > 0 ? Math.max(...messages.map(m => m.id)) + 1 : 1;
+    const newMessage = { id: newId, text: '' };
+    const updatedMessages = [...messages, newMessage];
+    setMessages(updatedMessages);
+    localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updatedMessages));
+  };
+
+  // Delete Message Handler
+  const handleDeleteMessage = (id: number) => {
+    const updatedMessages = messages.filter(m => m.id !== id);
+    setMessages(updatedMessages);
+    localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updatedMessages));
+  };
+
   // Connect to Live Stream
   const handleConnect = async () => {
     if (!accessToken) {
@@ -229,18 +245,18 @@ const App: React.FC = () => {
 
         {/* Right Column: Messages */}
         <div className="lg:col-span-7 xl:col-span-8">
-            <div className="bg-slate-800 rounded-xl p-6 shadow-lg border border-slate-700 h-full">
-                <div className="flex justify-between items-center mb-6 pb-4 border-b border-slate-700">
+            <div className="bg-slate-800 rounded-xl p-6 shadow-lg border border-slate-700 h-full flex flex-col">
+                <div className="flex justify-between items-center mb-6 pb-4 border-b border-slate-700 shrink-0">
                     <h2 className="text-xl font-bold flex items-center gap-2 text-white">
                         <MessageSquare className="w-5 h-5 text-green-400" />
                         Збережені повідомлення
                     </h2>
                     <span className="text-xs font-mono px-2 py-1 rounded bg-slate-900 text-slate-500">
-                        Storage: Local
+                        Total: {messages.length}
                     </span>
                 </div>
 
-                <div className="space-y-1">
+                <div className="flex-grow overflow-y-auto pr-2 space-y-1 custom-scrollbar">
                     {messages.map((msg) => (
                         <MessageSlot
                             key={msg.id}
@@ -248,14 +264,31 @@ const App: React.FC = () => {
                             state={messageStates[msg.id] || { id: msg.id, status: SendingStatus.IDLE }}
                             onUpdate={handleUpdateMessage}
                             onSend={handleSendMessage}
+                            onDelete={handleDeleteMessage}
                             disabled={!liveDetails?.liveChatId || !accessToken}
                         />
                     ))}
+                    
+                    {messages.length === 0 && (
+                        <div className="text-center py-8 text-slate-500 italic">
+                            Список повідомлень порожній
+                        </div>
+                    )}
+                </div>
+
+                <div className="mt-4 pt-4 border-t border-slate-700 shrink-0">
+                    <button
+                        onClick={handleAddMessage}
+                        className="w-full py-3 border-2 border-dashed border-slate-700 rounded-lg text-slate-400 hover:text-white hover:border-slate-500 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-2 font-medium"
+                    >
+                        <Plus className="w-4 h-4" />
+                        Додати повідомлення
+                    </button>
                 </div>
 
                 {!liveDetails?.liveChatId && (
-                    <div className="mt-8 text-center p-8 border-2 border-dashed border-slate-700 rounded-xl text-slate-500">
-                        <p>Підключіться до трансляції, щоб активувати відправку.</p>
+                    <div className="mt-4 text-center p-3 border border-yellow-900/30 bg-yellow-900/10 rounded-lg text-yellow-500/70 text-sm">
+                        ⚠️ Підключіться до трансляції, щоб активувати відправку.
                     </div>
                 )}
             </div>
