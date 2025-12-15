@@ -1,0 +1,7 @@
+{
+  "name": "yt-stream-sender",
+  "compatibility_date": "2025-12-15",
+  "assets": {
+    "directory": "./dist"
+  }
+}
