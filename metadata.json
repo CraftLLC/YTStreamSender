@@ -1,0 +1,5 @@
+{
+  "name": "YT Stream Sender",
+  "description": "Інструмент для швидкого надсилання збережених повідомлень у чат прямої трансляції YouTube.",
+  "requestFramePermissions": []
+}
