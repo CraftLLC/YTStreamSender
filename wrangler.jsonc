@@ -1,5 +1,5 @@
 {
-  "name": "yt-stream-sender",
+  "name": "ytstreamsender",
   "compatibility_date": "2025-12-15",
   "assets": {
     "directory": "./dist"
