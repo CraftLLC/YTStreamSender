@@ -1,16 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SettingsPanel } from './components/SettingsPanel';
 import { MessageSlot } from './components/MessageSlot';
 import { AppConfig, SavedMessage, MessageState, SendingStatus, LiveStreamDetails } from './types';
 import { STORAGE_KEYS, DEFAULT_MESSAGES } from './constants';
 import { extractVideoId, fetchLiveChatId, sendMessageToChat, refreshGoogleToken } from './services/youtubeService';
-import { MessageSquare, Zap, Plus, Trash2 } from 'lucide-react';
+import { MessageSquare, Zap, Plus, Trash2, Filter, Pin, Search, Undo, X } from 'lucide-react';
 
 // Declaration for Google Identity Services
 declare global {
   interface Window {
     google: any;
   }
+}
+
+type FilterType = 'all' | 'pinned';
+
+interface DeletedMessageState {
+  message: SavedMessage;
+  index: number;
 }
 
 const App: React.FC = () => {
@@ -27,6 +34,12 @@ const App: React.FC = () => {
   
   // State: Messages
   const [messages, setMessages] = useState<SavedMessage[]>(DEFAULT_MESSAGES);
+  const [filter, setFilter] = useState<FilterType>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // State: Undo / Deletion
+  const [lastDeleted, setLastDeleted] = useState<DeletedMessageState | null>(null);
+  const undoTimeoutRef = useRef<number | null>(null);
   
   // State: Runtime
   const [liveDetails, setLiveDetails] = useState<LiveStreamDetails | null>(null);
@@ -107,7 +120,6 @@ const App: React.FC = () => {
       const data = await refreshGoogleToken(config.clientId, config.clientSecret, refreshToken);
       updateAccessToken(data.access_token);
       setConnectionError(null);
-      // alert("Токен успішно оновлено!"); 
     } catch (e: any) {
       setConnectionError("Помилка оновлення токена: " + e.message);
     }
@@ -165,17 +177,67 @@ const App: React.FC = () => {
     updateMessages([...messages, newMessage]);
   };
 
-  // Delete Single Message
+  // Delete Single Message with Undo
   const handleDeleteMessage = (id: number) => {
-    const msg = messages.find(m => m.id === id);
-    if (msg?.isPinned) return; 
-    updateMessages(messages.filter(m => m.id !== id));
+    const index = messages.findIndex(m => m.id === id);
+    if (index === -1) return;
+
+    const msg = messages[index];
+    if (msg.isPinned || msg.isMain) return; 
+
+    // Clear previous timeout if exists
+    if (undoTimeoutRef.current) {
+        clearTimeout(undoTimeoutRef.current);
+    }
+
+    // Save for undo
+    setLastDeleted({ message: msg, index });
+    
+    // Remove
+    const newMessages = [...messages];
+    newMessages.splice(index, 1);
+    updateMessages(newMessages);
+
+    // Set timeout to clear undo availability after 5 seconds
+    undoTimeoutRef.current = setTimeout(() => {
+        setLastDeleted(null);
+        undoTimeoutRef.current = null;
+    }, 5000);
   };
 
-  // Delete All (Except Pinned)
+  // Restore deleted message
+  const handleUndoDelete = () => {
+      if (!lastDeleted) return;
+
+      const newMessages = [...messages];
+      // Insert back at original position or end if out of bounds
+      const insertIndex = Math.min(lastDeleted.index, newMessages.length);
+      newMessages.splice(insertIndex, 0, lastDeleted.message);
+      
+      updateMessages(newMessages);
+      setLastDeleted(null);
+      
+      if (undoTimeoutRef.current) {
+          clearTimeout(undoTimeoutRef.current);
+          undoTimeoutRef.current = null;
+      }
+  };
+
+  // Clear undo toast manually
+  const handleDismissUndo = () => {
+      setLastDeleted(null);
+      if (undoTimeoutRef.current) {
+          clearTimeout(undoTimeoutRef.current);
+          undoTimeoutRef.current = null;
+      }
+  };
+
+  // Delete All (Except Pinned and Main)
   const handleDeleteAll = () => {
       if (window.confirm('Видалити всі незакріплені повідомлення?')) {
-          updateMessages(messages.filter(m => m.isPinned));
+          // Note: Bulk delete doesn't support undo for now to keep logic simple
+          updateMessages(messages.filter(m => m.isPinned || m.isMain));
+          setLastDeleted(null); // Clear any pending single undo
       }
   };
 
@@ -184,6 +246,15 @@ const App: React.FC = () => {
       const updatedMessages = messages.map(msg => 
           msg.id === id ? { ...msg, isPinned: !msg.isPinned } : msg
       );
+      updateMessages(updatedMessages);
+  };
+
+  // Set Main Message (Mutual Exclusive)
+  const handleSetMain = (id: number) => {
+      const updatedMessages = messages.map(msg => ({
+          ...msg,
+          isMain: msg.id === id ? !msg.isMain : false // Toggle current, uncheck others
+      }));
       updateMessages(updatedMessages);
   };
 
@@ -259,9 +330,26 @@ const App: React.FC = () => {
     }
   };
 
+  // Send Main Message
+  const handleSendMainMessage = () => {
+      const mainMsg = messages.find(m => m.isMain);
+      if (mainMsg) {
+          handleSendMessage(mainMsg.id, mainMsg.text);
+      }
+  };
+
+  // Filter Messages
+  const filteredMessages = messages.filter(msg => {
+    const matchesFilter = filter === 'all' || msg.isPinned;
+    const matchesSearch = msg.text.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesFilter && matchesSearch;
+  });
+
+  const hasMainMessage = messages.some(m => m.isMain);
+
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-8 flex items-center justify-center">
-      <div className="max-w-5xl w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-8 flex items-center justify-center relative">
+      <div className="max-w-5xl w-full grid grid-cols-1 lg:grid-cols-12 gap-6 pb-16">
         
         {/* Header (Mobile only) */}
         <div className="lg:col-span-12 lg:hidden mb-4 text-center">
@@ -288,17 +376,17 @@ const App: React.FC = () => {
                 connectionError={connectionError}
                 onConnect={handleConnect}
                 isLoadingChat={isLoadingChat}
+                hasMainMessage={hasMainMessage}
+                onSendMainMessage={handleSendMainMessage}
             />
 
             <div className="bg-slate-800/50 rounded-xl p-6 border border-slate-700/50 text-sm text-slate-400">
                 <h3 className="font-semibold text-slate-300 mb-2">Підказки:</h3>
                 <ul className="list-disc list-inside space-y-1.5 text-xs">
+                    <li>Використовуйте <strong className="text-purple-400">🏠</strong> щоб зробити повідомлення головним (Main).</li>
+                    <li>Кнопка <span className="inline-block w-4 h-4 bg-purple-600 rounded-sm align-middle mx-1"></span> в панелі налаштувань миттєво відправляє головне повідомлення.</li>
                     <li>Використовуйте <strong className="text-slate-300">↑ ↓</strong> для зміни порядку.</li>
                     <li>Натисніть <strong className="text-amber-400">📌</strong> щоб закріпити повідомлення.</li>
-                    <li>Кнопка "Очистити" видаляє лише незакріплене.</li>
-                    <li>
-                        Для авто-оновлення токена введіть <strong>Client Secret</strong> та <strong>Refresh Token</strong> (з OAuth Playground).
-                    </li>
                 </ul>
             </div>
         </div>
@@ -306,59 +394,91 @@ const App: React.FC = () => {
         {/* Right Column: Messages */}
         <div className="lg:col-span-7 xl:col-span-8">
             <div className="bg-slate-800 rounded-xl p-6 shadow-lg border border-slate-700 h-full flex flex-col">
-                <div className="flex justify-between items-center mb-6 pb-4 border-b border-slate-700 shrink-0">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 pb-4 border-b border-slate-700 shrink-0 gap-4">
                     <h2 className="text-xl font-bold flex items-center gap-2 text-white">
                         <MessageSquare className="w-5 h-5 text-green-400" />
-                        Збережені повідомлення
+                        Повідомлення
                     </h2>
-                    <div className="flex items-center gap-3">
-                         <span className="text-xs font-mono px-2 py-1 rounded bg-slate-900 text-slate-500">
-                            Count: {messages.length}
-                        </span>
-                        {messages.some(m => !m.isPinned) && messages.length > 0 && (
-                            <button 
-                                onClick={handleDeleteAll}
-                                className="text-xs flex items-center gap-1 text-slate-500 hover:text-red-400 transition-colors"
-                            >
-                                <Trash2 className="w-3 h-3" />
-                                Очистити
-                            </button>
-                        )}
+                    
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <div className="relative group flex-grow sm:flex-grow-0">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+                            <input 
+                                type="text" 
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Пошук..." 
+                                className="bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 w-full sm:w-32 focus:w-full sm:focus:w-48 transition-all"
+                            />
+                        </div>
+
+                        <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700 shrink-0">
+                             <button
+                                onClick={() => setFilter('all')}
+                                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${filter === 'all' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                             >
+                                <Filter className="w-3 h-3" /> <span className="hidden sm:inline">Всі</span>
+                             </button>
+                             <button
+                                onClick={() => setFilter('pinned')}
+                                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${filter === 'pinned' ? 'bg-amber-900/40 text-amber-200' : 'text-slate-500 hover:text-slate-300'}`}
+                             >
+                                <Pin className="w-3 h-3" /> <span className="hidden sm:inline">Закріплені</span>
+                             </button>
+                        </div>
                     </div>
                 </div>
 
                 <div className="flex-grow overflow-y-auto pr-1 space-y-1 custom-scrollbar">
-                    {messages.map((msg, index) => (
+                    {filteredMessages.map((msg, index) => (
                         <MessageSlot
                             key={msg.id}
                             index={index}
-                            total={messages.length}
+                            total={filteredMessages.length}
                             message={msg}
                             state={messageStates[msg.id] || { id: msg.id, status: SendingStatus.IDLE }}
                             onUpdate={handleUpdateMessageText}
                             onSend={handleSendMessage}
                             onDelete={handleDeleteMessage}
                             onPin={handleTogglePin}
+                            onSetMain={handleSetMain}
                             onMove={handleMoveMessage}
                             disabled={!liveDetails?.liveChatId || !accessToken}
                         />
                     ))}
                     
-                    {messages.length === 0 && (
+                    {filteredMessages.length === 0 && (
                         <div className="text-center py-12 text-slate-600 border-2 border-dashed border-slate-700/50 rounded-lg">
-                            <p>Список порожній.</p>
+                            <p>
+                                {searchQuery 
+                                    ? 'Нічого не знайдено за запитом' 
+                                    : filter === 'pinned' 
+                                        ? 'Немає закріплених повідомлень' 
+                                        : 'Список порожній'
+                                }
+                            </p>
                         </div>
                     )}
                 </div>
 
-                <div className="mt-4 pt-4 border-t border-slate-700 shrink-0">
-                    <button
+                <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-700 shrink-0 gap-4">
+                     <button
                         onClick={handleAddMessage}
-                        className="w-full py-3 border-2 border-dashed border-slate-700 rounded-lg text-slate-400 hover:text-white hover:border-slate-500 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-2 font-medium"
+                        className="flex-grow py-3 border-2 border-dashed border-slate-700 rounded-lg text-slate-400 hover:text-white hover:border-slate-500 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-2 font-medium"
                     >
                         <Plus className="w-4 h-4" />
                         Додати повідомлення
                     </button>
+                    
+                     {messages.some(m => !m.isPinned && !m.isMain) && messages.length > 0 && (
+                        <button 
+                            onClick={handleDeleteAll}
+                            className="w-10 h-10 flex items-center justify-center rounded-lg border border-slate-700 text-slate-500 hover:text-red-400 hover:bg-red-900/10 transition-colors"
+                            title="Очистити список (крім закріплених)"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                    )}
                 </div>
 
                 {!liveDetails?.liveChatId && (
@@ -368,6 +488,28 @@ const App: React.FC = () => {
                 )}
             </div>
         </div>
+
+        {/* Undo Toast Notification */}
+        {lastDeleted && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-700 text-slate-200 px-4 py-3 rounded-lg shadow-xl shadow-black/50 flex items-center gap-4 animate-in slide-in-from-bottom-2 z-50">
+                <span className="text-sm">Повідомлення видалено</span>
+                <div className="flex items-center gap-2 border-l border-slate-700 pl-4">
+                    <button 
+                        onClick={handleUndoDelete}
+                        className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors"
+                    >
+                        <Undo className="w-4 h-4" />
+                        Відновити
+                    </button>
+                    <button 
+                        onClick={handleDismissUndo}
+                        className="p-1 hover:bg-slate-700 rounded text-slate-500 hover:text-slate-300 transition-colors ml-1"
+                    >
+                        <X className="w-4 h-4" />
+                    </button>
+                </div>
+            </div>
+        )}
       </div>
     </div>
   );

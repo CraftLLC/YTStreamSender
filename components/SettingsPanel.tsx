@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppConfig } from '../types';
-import { Key, Link as LinkIcon, Save, AlertCircle, PlayCircle, ShieldCheck, LogIn, Check, ChevronDown, ChevronRight, LogOut, RefreshCw, Lock } from 'lucide-react';
+import { Key, Link as LinkIcon, Save, AlertCircle, PlayCircle, ShieldCheck, LogIn, Check, ChevronDown, ChevronRight, LogOut, RefreshCw, Lock, Home } from 'lucide-react';
 
 interface SettingsPanelProps {
   config: AppConfig;
@@ -19,6 +19,9 @@ interface SettingsPanelProps {
   streamTitle: string | null;
   connectionError: string | null;
   isLoadingChat: boolean;
+  // Main Message
+  hasMainMessage: boolean;
+  onSendMainMessage: () => void;
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ 
@@ -35,7 +38,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   isConnected, 
   streamTitle, 
   connectionError,
-  isLoadingChat
+  isLoadingChat,
+  hasMainMessage,
+  onSendMainMessage
 }) => {
   const [localConfig, setLocalConfig] = useState<AppConfig>(config);
   const [isDirty, setIsDirty] = useState(false);
@@ -228,24 +233,24 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         </div>
 
         {/* Actions */}
-        <div className="flex gap-3 pt-2">
+        <div className="flex gap-2 pt-2">
           <button
             onClick={handleSave}
             disabled={!isDirty}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-medium transition-colors ${
+            title="Зберегти налаштування"
+            className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg font-medium transition-colors ${
               isDirty 
                 ? 'bg-blue-600 hover:bg-blue-700 text-white' 
                 : 'bg-slate-700 text-slate-400 cursor-not-allowed'
             }`}
           >
             <Save className="w-4 h-4" />
-            Зберегти
           </button>
           
           <button
             onClick={onConnect}
             disabled={!localConfig.streamUrl || !isAuthorized || isLoadingChat}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-medium transition-colors ${
+             className={`flex-grow flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-medium transition-colors ${
               isConnected
                 ? 'bg-green-600 hover:bg-green-700 text-white'
                 : 'bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-slate-700 disabled:text-slate-500'
@@ -259,6 +264,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                <PlayCircle className="w-4 h-4" />
              )}
              {isConnected ? 'Підключено' : 'Знайти чат'}
+          </button>
+          
+           <button
+            onClick={onSendMainMessage}
+            disabled={!isConnected || !hasMainMessage}
+            title="Швидко надіслати головне повідомлення (Main)"
+            className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg font-medium transition-colors ${
+              isConnected && hasMainMessage
+                ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-900/20' 
+                : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+            }`}
+          >
+            <Home className="w-4 h-4" />
           </button>
         </div>
 

@@ -8,6 +8,7 @@ export interface SavedMessage {
   id: number;
   text: string;
   isPinned?: boolean;
+  isMain?: boolean;
 }
 
 export interface LiveStreamDetails {
