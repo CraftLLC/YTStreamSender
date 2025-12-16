@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { SettingsPanel } from './components/SettingsPanel';
 import { MessageSlot } from './components/MessageSlot';
-import { AppConfig, SavedMessage, MessageState, SendingStatus, LiveStreamDetails } from './types';
+import { AppConfig, SavedMessage, MessageState, SendingStatus, LiveStreamDetails, ChatMessage } from './types';
 import { STORAGE_KEYS, DEFAULT_MESSAGES } from './constants';
-import { extractVideoId, fetchLiveChatId, sendMessageToChat, refreshGoogleToken, exchangeCodeForTokens } from './services/youtubeService';
-import { MessageSquare, Zap, Plus, Trash2, Filter, Pin, Search, Undo, X } from 'lucide-react';
+import { extractVideoId, fetchLiveChatId, sendMessageToChat, refreshGoogleToken, exchangeCodeForTokens, fetchChatMessages } from './services/youtubeService';
+import { MessageSquare, Zap, Plus, Trash2, Filter, Pin, Search, Undo, X, List, User, Send, Loader2 } from 'lucide-react';
 
 // Declaration for Google Identity Services
 declare global {
@@ -14,6 +14,7 @@ declare global {
 }
 
 type FilterType = 'all' | 'pinned';
+type TabType = 'saved' | 'chat';
 
 interface DeletedMessageState {
   message: SavedMessage;
@@ -32,11 +33,25 @@ const App: React.FC = () => {
   const [accessToken, setAccessToken] = useState<string>('');
   const [refreshToken, setRefreshToken] = useState<string>('');
   
-  // State: Messages
+  // State: App View
+  const [activeTab, setActiveTab] = useState<TabType>('saved');
+
+  // State: Messages (Saved)
   const [messages, setMessages] = useState<SavedMessage[]>(DEFAULT_MESSAGES);
   const [filter, setFilter] = useState<FilterType>('all');
   const [searchQuery, setSearchQuery] = useState('');
   
+  // State: Quick Message
+  const [quickMessage, setQuickMessage] = useState('');
+  const [quickMessageStatus, setQuickMessageStatus] = useState<SendingStatus>(SendingStatus.IDLE);
+
+  // State: Live Chat
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatNextPageToken, setChatNextPageToken] = useState<string | undefined>(undefined);
+  const [chatPollingInterval, setChatPollingInterval] = useState<number>(3000);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const pollingTimeoutRef = useRef<number | null>(null);
+
   // State: Undo / Deletion
   const [lastDeleted, setLastDeleted] = useState<DeletedMessageState | null>(null);
   const undoTimeoutRef = useRef<number | null>(null);
@@ -98,6 +113,77 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Poll Chat Messages Effect
+  useEffect(() => {
+    const pollChat = async () => {
+        if (!accessToken || !liveDetails?.liveChatId || activeTab !== 'chat') {
+            return;
+        }
+
+        try {
+            const data = await fetchChatMessages(liveDetails.liveChatId, accessToken, chatNextPageToken);
+            
+            setChatNextPageToken(data.nextPageToken);
+            setChatPollingInterval(Math.max(data.pollingIntervalMillis || 3000, 1000));
+            
+            if (data.items && data.items.length > 0) {
+                 const newMessages = data.items.map((item: any) => ({
+                    id: item.id,
+                    publishedAt: item.snippet.publishedAt,
+                    messageText: item.snippet.displayMessage,
+                    author: {
+                        displayName: item.authorDetails.displayName,
+                        profileImageUrl: item.authorDetails.profileImageUrl,
+                        isChatOwner: item.authorDetails.isChatOwner,
+                        isChatModerator: item.authorDetails.isChatModerator,
+                        isVerified: item.authorDetails.isVerified
+                    }
+                }));
+
+                setChatMessages(prev => {
+                    // Avoid duplicates (though API usually handles this via pageToken)
+                    const existingIds = new Set(prev.map(m => m.id));
+                    const uniqueNew = newMessages.filter((m: ChatMessage) => !existingIds.has(m.id));
+                    if (uniqueNew.length === 0) return prev;
+                    return [...prev, ...uniqueNew].slice(-200); // Keep last 200
+                });
+            }
+
+        } catch (error) {
+            console.error("Chat polling error", error);
+        } finally {
+            // Schedule next poll
+            if (activeTab === 'chat' && liveDetails?.liveChatId) {
+                pollingTimeoutRef.current = setTimeout(pollChat, chatPollingInterval) as unknown as number;
+            }
+        }
+    };
+
+    if (activeTab === 'chat' && liveDetails?.liveChatId) {
+        // Start polling loop
+        // If it's the first load (no token), do it immediately, otherwise wait interval
+        if (!chatNextPageToken) {
+            pollChat();
+        } else {
+             pollingTimeoutRef.current = setTimeout(pollChat, chatPollingInterval) as unknown as number;
+        }
+    }
+
+    return () => {
+        if (pollingTimeoutRef.current) {
+            clearTimeout(pollingTimeoutRef.current);
+        }
+    };
+  }, [activeTab, liveDetails, accessToken, chatNextPageToken, chatPollingInterval]);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    if (activeTab === 'chat' && chatEndRef.current) {
+        chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages, activeTab]);
+
+
   // Save config handler
   const handleSaveConfig = (newConfig: AppConfig) => {
     setConfig(newConfig);
@@ -106,6 +192,8 @@ const App: React.FC = () => {
     // Reset connection info if URL changed
     if (newConfig.streamUrl !== config.streamUrl) {
         setLiveDetails(null);
+        setChatMessages([]);
+        setChatNextPageToken(undefined);
     }
   };
 
@@ -137,25 +225,19 @@ const App: React.FC = () => {
       return;
     }
 
-    // Determine strategy: 
-    // If Client Secret is present, use 'initCodeClient' (Authorization Code Flow) to get Refresh Token.
-    // If NOT present, use 'initTokenClient' (Implicit Flow) for just Access Token.
     const useCodeFlow = !!config.clientSecret;
 
     try {
       if (useCodeFlow) {
-        // --- Code Flow (Access + Refresh Token) ---
         const client = window.google.accounts.oauth2.initCodeClient({
           client_id: config.clientId,
           scope: 'https://www.googleapis.com/auth/youtube.force-ssl',
           ux_mode: 'popup',
-          select_account: true, // Forces account selection to ensure consent prompt for offline access
+          select_account: true,
           callback: async (response: any) => {
             if (response.code) {
               try {
-                // Exchange code for tokens
                 const data = await exchangeCodeForTokens(config.clientId, config.clientSecret, response.code);
-                
                 updateAccessToken(data.access_token);
                 if (data.refresh_token) {
                   updateRefreshToken(data.refresh_token);
@@ -171,8 +253,6 @@ const App: React.FC = () => {
         });
         client.requestCode();
       } else {
-        // --- Implicit Flow (Access Token Only) ---
-        // Fallback if user didn't provide Client Secret
         const client = window.google.accounts.oauth2.initTokenClient({
           client_id: config.clientId,
           scope: 'https://www.googleapis.com/auth/youtube.force-ssl',
@@ -181,7 +261,7 @@ const App: React.FC = () => {
               updateAccessToken(response.access_token);
               setConnectionError(null);
               if (!config.clientSecret) {
-                alert("Увага: Без Client Secret ви отримали лише Access Token, який діє 1 годину. Для отримання Refresh Token заповніть поле Client Secret.");
+                alert("Увага: Без Client Secret ви отримали лише Access Token, який діє 1 годину.");
               }
             } else {
               setConnectionError("Не вдалося отримати токен доступу.");
@@ -224,20 +304,16 @@ const App: React.FC = () => {
     const msg = messages[index];
     if (msg.isPinned || msg.isMain) return; 
 
-    // Clear previous timeout if exists
     if (undoTimeoutRef.current) {
         clearTimeout(undoTimeoutRef.current);
     }
 
-    // Save for undo
     setLastDeleted({ message: msg, index });
     
-    // Remove
     const newMessages = [...messages];
     newMessages.splice(index, 1);
     updateMessages(newMessages);
 
-    // Set timeout to clear undo availability after 5 seconds
     undoTimeoutRef.current = setTimeout(() => {
         setLastDeleted(null);
         undoTimeoutRef.current = null;
@@ -249,7 +325,6 @@ const App: React.FC = () => {
       if (!lastDeleted) return;
 
       const newMessages = [...messages];
-      // Insert back at original position or end if out of bounds
       const insertIndex = Math.min(lastDeleted.index, newMessages.length);
       newMessages.splice(insertIndex, 0, lastDeleted.message);
       
@@ -262,7 +337,6 @@ const App: React.FC = () => {
       }
   };
 
-  // Clear undo toast manually
   const handleDismissUndo = () => {
       setLastDeleted(null);
       if (undoTimeoutRef.current) {
@@ -271,16 +345,13 @@ const App: React.FC = () => {
       }
   };
 
-  // Delete All (Except Pinned and Main)
   const handleDeleteAll = () => {
       if (window.confirm('Видалити всі незакріплені повідомлення?')) {
-          // Note: Bulk delete doesn't support undo for now to keep logic simple
           updateMessages(messages.filter(m => m.isPinned || m.isMain));
-          setLastDeleted(null); // Clear any pending single undo
+          setLastDeleted(null);
       }
   };
 
-  // Toggle Pin
   const handleTogglePin = (id: number) => {
       const updatedMessages = messages.map(msg => 
           msg.id === id ? { ...msg, isPinned: !msg.isPinned } : msg
@@ -288,16 +359,14 @@ const App: React.FC = () => {
       updateMessages(updatedMessages);
   };
 
-  // Set Main Message (Mutual Exclusive)
   const handleSetMain = (id: number) => {
       const updatedMessages = messages.map(msg => ({
           ...msg,
-          isMain: msg.id === id ? !msg.isMain : false // Toggle current, uncheck others
+          isMain: msg.id === id ? !msg.isMain : false
       }));
       updateMessages(updatedMessages);
   };
 
-  // Move Message
   const handleMoveMessage = (index: number, direction: 'up' | 'down') => {
       if (direction === 'up' && index === 0) return;
       if (direction === 'down' && index === messages.length - 1) return;
@@ -305,7 +374,6 @@ const App: React.FC = () => {
       const newMessages = [...messages];
       const targetIndex = direction === 'up' ? index - 1 : index + 1;
       
-      // Swap
       [newMessages[index], newMessages[targetIndex]] = [newMessages[targetIndex], newMessages[index]];
       updateMessages(newMessages);
   };
@@ -328,6 +396,8 @@ const App: React.FC = () => {
 
         const details = await fetchLiveChatId(videoId, accessToken);
         setLiveDetails({ ...details, videoId });
+        setChatMessages([]);
+        setChatNextPageToken(undefined);
         
     } catch (err: any) {
         setLiveDetails(null);
@@ -337,39 +407,55 @@ const App: React.FC = () => {
     }
   };
 
-  // Send Message
-  const handleSendMessage = async (id: number, text: string) => {
-    if (!liveDetails?.liveChatId || !accessToken) return;
-
-    setMessageStates(prev => ({
-        ...prev,
-        [id]: { id, status: SendingStatus.SENDING }
-    }));
-
-    try {
-        await sendMessageToChat(liveDetails.liveChatId, text, accessToken);
-        
-        setMessageStates(prev => ({
-            ...prev,
-            [id]: { id, status: SendingStatus.SUCCESS }
-        }));
-
-        setTimeout(() => {
-            setMessageStates(prev => ({
-                ...prev,
-                [id]: { id, status: SendingStatus.IDLE }
-            }));
-        }, 2000);
-
-    } catch (err: any) {
-        setMessageStates(prev => ({
-            ...prev,
-            [id]: { id, status: SendingStatus.ERROR, errorMessage: err.message }
-        }));
-    }
+  // Send Message Generic
+  const sendToYoutube = async (text: string, onSuccess: () => void, onError: (err: string) => void) => {
+      if (!liveDetails?.liveChatId || !accessToken) return;
+      try {
+          await sendMessageToChat(liveDetails.liveChatId, text, accessToken);
+          onSuccess();
+      } catch (err: any) {
+          onError(err.message);
+      }
   };
 
-  // Send Main Message
+  // Send Saved Message
+  const handleSendMessage = (id: number, text: string) => {
+    setMessageStates(prev => ({ ...prev, [id]: { id, status: SendingStatus.SENDING } }));
+
+    sendToYoutube(
+        text,
+        () => {
+            setMessageStates(prev => ({ ...prev, [id]: { id, status: SendingStatus.SUCCESS } }));
+            setTimeout(() => {
+                setMessageStates(prev => ({ ...prev, [id]: { id, status: SendingStatus.IDLE } }));
+            }, 2000);
+        },
+        (err) => {
+             setMessageStates(prev => ({ ...prev, [id]: { id, status: SendingStatus.ERROR, errorMessage: err } }));
+        }
+    );
+  };
+
+  // Send Quick Message
+  const handleSendQuickMessage = () => {
+      if (!quickMessage.trim()) return;
+      setQuickMessageStatus(SendingStatus.SENDING);
+
+      sendToYoutube(
+          quickMessage,
+          () => {
+              setQuickMessageStatus(SendingStatus.SUCCESS);
+              setQuickMessage('');
+              setTimeout(() => setQuickMessageStatus(SendingStatus.IDLE), 2000);
+          },
+          (err) => {
+              setQuickMessageStatus(SendingStatus.ERROR);
+              alert('Помилка надсилання: ' + err); // Simple alert for quick message error
+              setTimeout(() => setQuickMessageStatus(SendingStatus.IDLE), 3000);
+          }
+      )
+  };
+
   const handleSendMainMessage = () => {
       const mainMsg = messages.find(m => m.isMain);
       if (mainMsg) {
@@ -422,109 +508,171 @@ const App: React.FC = () => {
             <div className="bg-slate-800/50 rounded-xl p-6 border border-slate-700/50 text-sm text-slate-400">
                 <h3 className="font-semibold text-slate-300 mb-2">Підказки:</h3>
                 <ul className="list-disc list-inside space-y-1.5 text-xs">
-                    <li>Використовуйте <strong className="text-purple-400">🏠</strong> щоб зробити повідомлення головним (Main).</li>
-                    <li>Кнопка <span className="inline-block w-4 h-4 bg-purple-600 rounded-sm align-middle mx-1"></span> в панелі налаштувань миттєво відправляє головне повідомлення.</li>
-                    <li>Використовуйте <strong className="text-slate-300">↑ ↓</strong> для зміни порядку.</li>
-                    <li>Натисніть <strong className="text-amber-400">📌</strong> щоб закріпити повідомлення.</li>
+                    <li>Використовуйте <strong className="text-purple-400">🏠</strong> щоб зробити повідомлення головним.</li>
+                    <li>Вкладка <strong>Чат</strong> дозволяє бачити повідомлення глядачів у реальному часі.</li>
+                    <li>Нижня панель дозволяє швидко відправити будь-який текст без збереження.</li>
                 </ul>
             </div>
         </div>
 
-        {/* Right Column: Messages */}
+        {/* Right Column: Messages & Chat */}
         <div className="lg:col-span-7 xl:col-span-8">
-            <div className="bg-slate-800 rounded-xl p-6 shadow-lg border border-slate-700 h-full flex flex-col">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 pb-4 border-b border-slate-700 shrink-0 gap-4">
-                    <h2 className="text-xl font-bold flex items-center gap-2 text-white">
-                        <MessageSquare className="w-5 h-5 text-green-400" />
-                        Повідомлення
-                    </h2>
-                    
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
-                        <div className="relative group flex-grow sm:flex-grow-0">
-                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
-                            <input 
-                                type="text" 
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                placeholder="Пошук..." 
-                                className="bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 w-full sm:w-32 focus:w-full sm:focus:w-48 transition-all"
-                            />
-                        </div>
-
-                        <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700 shrink-0">
-                             <button
-                                onClick={() => setFilter('all')}
-                                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${filter === 'all' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}
-                             >
-                                <Filter className="w-3 h-3" /> <span className="hidden sm:inline">Всі</span>
-                             </button>
-                             <button
-                                onClick={() => setFilter('pinned')}
-                                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${filter === 'pinned' ? 'bg-amber-900/40 text-amber-200' : 'text-slate-500 hover:text-slate-300'}`}
-                             >
-                                <Pin className="w-3 h-3" /> <span className="hidden sm:inline">Закріплені</span>
-                             </button>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="flex-grow overflow-y-auto pr-1 space-y-1 custom-scrollbar">
-                    {filteredMessages.map((msg, index) => (
-                        <MessageSlot
-                            key={msg.id}
-                            index={index}
-                            total={filteredMessages.length}
-                            message={msg}
-                            state={messageStates[msg.id] || { id: msg.id, status: SendingStatus.IDLE }}
-                            onUpdate={handleUpdateMessageText}
-                            onSend={handleSendMessage}
-                            onDelete={handleDeleteMessage}
-                            onPin={handleTogglePin}
-                            onSetMain={handleSetMain}
-                            onMove={handleMoveMessage}
-                            disabled={!liveDetails?.liveChatId || !accessToken}
-                        />
-                    ))}
-                    
-                    {filteredMessages.length === 0 && (
-                        <div className="text-center py-12 text-slate-600 border-2 border-dashed border-slate-700/50 rounded-lg">
-                            <p>
-                                {searchQuery 
-                                    ? 'Нічого не знайдено за запитом' 
-                                    : filter === 'pinned' 
-                                        ? 'Немає закріплених повідомлень' 
-                                        : 'Список порожній'
-                                }
-                            </p>
-                        </div>
-                    )}
-                </div>
-
-                <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-700 shrink-0 gap-4">
-                     <button
-                        onClick={handleAddMessage}
-                        className="flex-grow py-3 border-2 border-dashed border-slate-700 rounded-lg text-slate-400 hover:text-white hover:border-slate-500 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-2 font-medium"
+            <div className="bg-slate-800 rounded-xl shadow-lg border border-slate-700 h-[600px] flex flex-col relative overflow-hidden">
+                
+                {/* Tabs Header */}
+                <div className="flex border-b border-slate-700">
+                    <button
+                        onClick={() => setActiveTab('saved')}
+                        className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-colors ${activeTab === 'saved' ? 'bg-slate-700 text-white' : 'hover:bg-slate-700/50 text-slate-400'}`}
                     >
-                        <Plus className="w-4 h-4" />
-                        Додати повідомлення
+                        <List className="w-4 h-4" />
+                        Збережені
                     </button>
-                    
-                     {messages.some(m => !m.isPinned && !m.isMain) && messages.length > 0 && (
-                        <button 
-                            onClick={handleDeleteAll}
-                            className="w-10 h-10 flex items-center justify-center rounded-lg border border-slate-700 text-slate-500 hover:text-red-400 hover:bg-red-900/10 transition-colors"
-                            title="Очистити список (крім закріплених)"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                        </button>
-                    )}
+                    <button
+                        onClick={() => setActiveTab('chat')}
+                        className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-colors ${activeTab === 'chat' ? 'bg-slate-700 text-white' : 'hover:bg-slate-700/50 text-slate-400'}`}
+                    >
+                        <MessageSquare className="w-4 h-4" />
+                        Чат
+                        {liveDetails?.liveChatId && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>}
+                    </button>
                 </div>
 
-                {!liveDetails?.liveChatId && (
-                    <div className="mt-4 text-center p-3 border border-yellow-900/30 bg-yellow-900/10 rounded-lg text-yellow-500/70 text-sm">
-                        ⚠️ Підключіться до трансляції, щоб активувати відправку.
+                {/* Content Area */}
+                <div className="flex-grow overflow-hidden relative">
+                    
+                    {/* --- TAB: SAVED MESSAGES --- */}
+                    {activeTab === 'saved' && (
+                        <div className="absolute inset-0 flex flex-col p-4 pb-20"> {/* pb-20 for quick bar space */}
+                             <div className="flex justify-between items-center mb-4 gap-2">
+                                <div className="relative group flex-grow">
+                                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+                                    <input 
+                                        type="text" 
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        placeholder="Пошук..." 
+                                        className="bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-full transition-all"
+                                    />
+                                </div>
+                                <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700 shrink-0">
+                                    <button onClick={() => setFilter('all')} className={`px-2 py-1.5 rounded-md text-xs font-medium transition-all ${filter === 'all' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}><Filter className="w-3 h-3" /></button>
+                                    <button onClick={() => setFilter('pinned')} className={`px-2 py-1.5 rounded-md text-xs font-medium transition-all ${filter === 'pinned' ? 'bg-amber-900/40 text-amber-200' : 'text-slate-500 hover:text-slate-300'}`}><Pin className="w-3 h-3" /></button>
+                                </div>
+                            </div>
+
+                            <div className="flex-grow overflow-y-auto pr-1 space-y-1 custom-scrollbar">
+                                {filteredMessages.map((msg, index) => (
+                                    <MessageSlot
+                                        key={msg.id}
+                                        index={index}
+                                        total={filteredMessages.length}
+                                        message={msg}
+                                        state={messageStates[msg.id] || { id: msg.id, status: SendingStatus.IDLE }}
+                                        onUpdate={handleUpdateMessageText}
+                                        onSend={handleSendMessage}
+                                        onDelete={handleDeleteMessage}
+                                        onPin={handleTogglePin}
+                                        onSetMain={handleSetMain}
+                                        onMove={handleMoveMessage}
+                                        disabled={!liveDetails?.liveChatId || !accessToken}
+                                    />
+                                ))}
+                                {filteredMessages.length === 0 && (
+                                    <div className="text-center py-8 text-slate-600 border-2 border-dashed border-slate-700/50 rounded-lg">
+                                        <p className="text-sm">Список порожній</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex justify-between items-center mt-3 pt-3 border-t border-slate-700 shrink-0 gap-3">
+                                <button onClick={handleAddMessage} className="flex-grow py-2 border-2 border-dashed border-slate-700 rounded-lg text-slate-400 hover:text-white hover:border-slate-500 hover:bg-slate-800/50 transition-all flex items-center justify-center gap-2 text-sm font-medium">
+                                    <Plus className="w-4 h-4" /> Додати
+                                </button>
+                                {messages.some(m => !m.isPinned && !m.isMain) && messages.length > 0 && (
+                                    <button onClick={handleDeleteAll} className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-700 text-slate-500 hover:text-red-400 hover:bg-red-900/10 transition-colors">
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- TAB: LIVE CHAT --- */}
+                    {activeTab === 'chat' && (
+                        <div className="absolute inset-0 flex flex-col bg-slate-900/50 pb-20">
+                            {!liveDetails?.liveChatId ? (
+                                <div className="flex flex-col items-center justify-center h-full text-slate-500 p-6 text-center">
+                                    <MessageSquare className="w-12 h-12 mb-2 opacity-20" />
+                                    <p>Підключіться до трансляції, щоб бачити чат.</p>
+                                </div>
+                            ) : chatMessages.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                                    <Loader2 className="w-8 h-8 animate-spin mb-2 text-blue-500/50" />
+                                    <p className="text-sm">Завантаження повідомлень...</p>
+                                </div>
+                            ) : (
+                                <div className="flex-grow overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                                    {chatMessages.map((msg) => (
+                                        <div key={msg.id} className="flex gap-3 text-sm animate-in fade-in slide-in-from-bottom-1 duration-300">
+                                            <div className="shrink-0">
+                                                {msg.author.profileImageUrl ? (
+                                                    <img src={msg.author.profileImageUrl} alt={msg.author.displayName} className="w-8 h-8 rounded-full bg-slate-700" />
+                                                ) : (
+                                                    <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center"><User className="w-4 h-4" /></div>
+                                                )}
+                                            </div>
+                                            <div className="flex flex-col min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`font-medium truncate ${msg.author.isChatOwner ? 'text-yellow-400' : msg.author.isChatModerator ? 'text-blue-400' : 'text-slate-300'}`}>
+                                                        {msg.author.displayName}
+                                                    </span>
+                                                    <span className="text-[10px] text-slate-600">{new Date(msg.publishedAt).toLocaleTimeString([], { hour: '2-digit', minute:'2-digit' })}</span>
+                                                </div>
+                                                <p className="text-slate-100 break-words leading-relaxed">{msg.messageText}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div ref={chatEndRef} />
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* --- GLOBAL: QUICK SEND BAR (Persistent Footer) --- */}
+                    <div className="absolute bottom-0 left-0 right-0 p-3 bg-slate-800 border-t border-slate-700 z-10">
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={quickMessage}
+                                onChange={(e) => setQuickMessage(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleSendQuickMessage()}
+                                placeholder="Швидке повідомлення..."
+                                className="flex-grow bg-slate-900 border border-slate-700 rounded-lg py-2 px-3 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none placeholder-slate-600"
+                                disabled={!liveDetails?.liveChatId || quickMessageStatus === SendingStatus.SENDING}
+                            />
+                            <button
+                                onClick={handleSendQuickMessage}
+                                disabled={!liveDetails?.liveChatId || !quickMessage.trim() || quickMessageStatus === SendingStatus.SENDING}
+                                className={`flex items-center justify-center w-10 rounded-lg transition-colors ${
+                                    quickMessageStatus === SendingStatus.SUCCESS ? 'bg-green-600 text-white' :
+                                    quickMessageStatus === SendingStatus.ERROR ? 'bg-red-600 text-white' :
+                                    'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-slate-700 disabled:text-slate-500'
+                                }`}
+                            >
+                                {quickMessageStatus === SendingStatus.SENDING ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <Send className="w-4 h-4" />
+                                )}
+                            </button>
+                        </div>
+                        {!liveDetails?.liveChatId && (
+                            <p className="text-[10px] text-center text-slate-500 mt-1">Підключіться до трансляції для відправки</p>
+                        )}
                     </div>
-                )}
+
+                </div>
             </div>
         </div>
 

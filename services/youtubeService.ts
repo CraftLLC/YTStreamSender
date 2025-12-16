@@ -92,6 +92,28 @@ export const sendMessageToChat = async (liveChatId: string, messageText: string,
   return await response.json();
 };
 
+export const fetchChatMessages = async (liveChatId: string, token: string, pageToken?: string) => {
+    if (!token) throw new Error("Access Token is required");
+
+    let url = `https://www.googleapis.com/youtube/v3/liveChat/messages?liveChatId=${liveChatId}&part=snippet,authorDetails`;
+    if (pageToken) {
+        url += `&pageToken=${pageToken}`;
+    }
+
+    const response = await fetch(url, {
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || 'Помилка отримання чату');
+    }
+
+    return await response.json(); // Returns { items: [], nextPageToken: '', pollingIntervalMillis: 1000, ... }
+};
+
 export const refreshGoogleToken = async (clientId: string, clientSecret: string, refreshToken: string) => {
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',

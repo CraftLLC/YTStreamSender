@@ -29,3 +29,18 @@ export interface MessageState {
   status: SendingStatus;
   errorMessage?: string;
 }
+
+export interface ChatAuthor {
+  displayName: string;
+  profileImageUrl: string;
+  isChatOwner: boolean;
+  isChatModerator: boolean;
+  isVerified: boolean;
+}
+
+export interface ChatMessage {
+  id: string;
+  publishedAt: string;
+  messageText: string;
+  author: ChatAuthor;
+}
