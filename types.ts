@@ -40,6 +40,7 @@ export interface ChatAuthor {
 
 export interface ChatMessage {
   id: string;
+  type: string;
   publishedAt: string;
   messageText: string;
   author: ChatAuthor;

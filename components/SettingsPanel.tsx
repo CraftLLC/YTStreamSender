@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppConfig } from '../types';
-import { Key, Link as LinkIcon, Save, AlertCircle, PlayCircle, ShieldCheck, LogIn, Check, ChevronDown, ChevronRight, LogOut, RefreshCw, Lock, Home } from 'lucide-react';
+import { Key, Link as LinkIcon, Save, AlertCircle, PlayCircle, ShieldCheck, LogIn, Check, ChevronDown, ChevronRight, LogOut, RefreshCw, Lock } from 'lucide-react';
 
 interface SettingsPanelProps {
   config: AppConfig;
@@ -19,9 +19,6 @@ interface SettingsPanelProps {
   streamTitle: string | null;
   connectionError: string | null;
   isLoadingChat: boolean;
-  // Main Message
-  hasMainMessage: boolean;
-  onSendMainMessage: () => void;
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ 
@@ -39,8 +36,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   streamTitle, 
   connectionError,
   isLoadingChat,
-  hasMainMessage,
-  onSendMainMessage
 }) => {
   const [localConfig, setLocalConfig] = useState<AppConfig>(config);
   const [isDirty, setIsDirty] = useState(false);
@@ -264,19 +259,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                <PlayCircle className="w-4 h-4" />
              )}
              {isConnected ? 'Підключено' : 'Знайти чат'}
-          </button>
-          
-           <button
-            onClick={onSendMainMessage}
-            disabled={!isConnected || !hasMainMessage}
-            title="Швидко надіслати головне повідомлення (Main)"
-            className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg font-medium transition-colors ${
-              isConnected && hasMainMessage
-                ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-900/20' 
-                : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-            }`}
-          >
-            <Home className="w-4 h-4" />
           </button>
         </div>
 

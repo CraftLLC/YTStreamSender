@@ -4,7 +4,7 @@ import { MessageSlot } from './components/MessageSlot';
 import { AppConfig, SavedMessage, MessageState, SendingStatus, LiveStreamDetails, ChatMessage } from './types';
 import { STORAGE_KEYS, DEFAULT_MESSAGES } from './constants';
 import { extractVideoId, fetchLiveChatId, sendMessageToChat, refreshGoogleToken, exchangeCodeForTokens, fetchChatMessages } from './services/youtubeService';
-import { MessageSquare, Zap, Plus, Trash2, Filter, Pin, Search, Undo, X, List, User, Send, Loader2 } from 'lucide-react';
+import { MessageSquare, Zap, Plus, Trash2, Filter, Pin, Search, Undo, X, List, User, Send, Loader2, Home } from 'lucide-react';
 
 // Declaration for Google Identity Services
 declare global {
@@ -44,12 +44,15 @@ const App: React.FC = () => {
   // State: Quick Message
   const [quickMessage, setQuickMessage] = useState('');
   const [quickMessageStatus, setQuickMessageStatus] = useState<SendingStatus>(SendingStatus.IDLE);
+  const [mainMessageStatus, setMainMessageStatus] = useState<SendingStatus>(SendingStatus.IDLE);
 
   // State: Live Chat
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [ytPinnedMessage, setYtPinnedMessage] = useState<ChatMessage | null>(null);
   const [chatNextPageToken, setChatNextPageToken] = useState<string | undefined>(undefined);
   const [chatPollingInterval, setChatPollingInterval] = useState<number>(3000);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const isUserAtBottomRef = useRef<boolean>(true);
   const pollingTimeoutRef = useRef<number | null>(null);
 
   // State: Undo / Deletion
@@ -127,23 +130,50 @@ const App: React.FC = () => {
             setChatPollingInterval(Math.max(data.pollingIntervalMillis || 3000, 1000));
             
             if (data.items && data.items.length > 0) {
-                 const newMessages = data.items.map((item: any) => ({
-                    id: item.id,
-                    publishedAt: item.snippet.publishedAt,
-                    messageText: item.snippet.displayMessage,
-                    author: {
-                        displayName: item.authorDetails.displayName,
-                        profileImageUrl: item.authorDetails.profileImageUrl,
-                        isChatOwner: item.authorDetails.isChatOwner,
-                        isChatModerator: item.authorDetails.isChatModerator,
-                        isVerified: item.authorDetails.isVerified
+                 const newMessages: ChatMessage[] = [];
+                 
+                 data.items.forEach((item: any) => {
+                    const type = item.snippet.type;
+                    
+                    // Handle Pinned Message Event
+                    if (type === 'messagePinnedEvent') {
+                         setYtPinnedMessage({
+                             id: item.id,
+                             type: type,
+                             publishedAt: item.snippet.publishedAt,
+                             messageText: item.snippet.displayMessage || 'Закріплене повідомлення',
+                             author: {
+                                 displayName: 'System',
+                                 profileImageUrl: '',
+                                 isChatOwner: false,
+                                 isChatModerator: false,
+                                 isVerified: false
+                             }
+                         });
+                         return;
                     }
-                }));
+
+                    // Handle Standard Text Messages
+                    if (type === 'textMessageEvent' || type === 'superChatEvent') {
+                        newMessages.push({
+                            id: item.id,
+                            type: type,
+                            publishedAt: item.snippet.publishedAt,
+                            messageText: item.snippet.displayMessage,
+                            author: {
+                                displayName: item.authorDetails.displayName,
+                                profileImageUrl: item.authorDetails.profileImageUrl,
+                                isChatOwner: item.authorDetails.isChatOwner,
+                                isChatModerator: item.authorDetails.isChatModerator,
+                                isVerified: item.authorDetails.isVerified
+                            }
+                        });
+                    }
+                 });
 
                 setChatMessages(prev => {
-                    // Avoid duplicates (though API usually handles this via pageToken)
                     const existingIds = new Set(prev.map(m => m.id));
-                    const uniqueNew = newMessages.filter((m: ChatMessage) => !existingIds.has(m.id));
+                    const uniqueNew = newMessages.filter((m) => !existingIds.has(m.id));
                     if (uniqueNew.length === 0) return prev;
                     return [...prev, ...uniqueNew].slice(-200); // Keep last 200
                 });
@@ -152,7 +182,6 @@ const App: React.FC = () => {
         } catch (error) {
             console.error("Chat polling error", error);
         } finally {
-            // Schedule next poll
             if (activeTab === 'chat' && liveDetails?.liveChatId) {
                 pollingTimeoutRef.current = setTimeout(pollChat, chatPollingInterval) as unknown as number;
             }
@@ -160,8 +189,6 @@ const App: React.FC = () => {
     };
 
     if (activeTab === 'chat' && liveDetails?.liveChatId) {
-        // Start polling loop
-        // If it's the first load (no token), do it immediately, otherwise wait interval
         if (!chatNextPageToken) {
             pollChat();
         } else {
@@ -176,10 +203,27 @@ const App: React.FC = () => {
     };
   }, [activeTab, liveDetails, accessToken, chatNextPageToken, chatPollingInterval]);
 
-  // Auto-scroll chat
+  // Handle Scroll to detect if user is at bottom
+  const handleChatScroll = () => {
+    if (chatContainerRef.current) {
+        const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
+        // Check if user is near bottom (within 50px tolerance)
+        const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+        isUserAtBottomRef.current = isAtBottom;
+    }
+  };
+
+  // Reset scroll to bottom when switching to chat tab
   useEffect(() => {
-    if (activeTab === 'chat' && chatEndRef.current) {
-        chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (activeTab === 'chat') {
+        isUserAtBottomRef.current = true;
+    }
+  }, [activeTab]);
+
+  // Auto-scroll logic
+  useEffect(() => {
+    if (activeTab === 'chat' && chatContainerRef.current && isUserAtBottomRef.current) {
+        chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [chatMessages, activeTab]);
 
@@ -193,6 +237,7 @@ const App: React.FC = () => {
     if (newConfig.streamUrl !== config.streamUrl) {
         setLiveDetails(null);
         setChatMessages([]);
+        setYtPinnedMessage(null);
         setChatNextPageToken(undefined);
     }
   };
@@ -397,6 +442,7 @@ const App: React.FC = () => {
         const details = await fetchLiveChatId(videoId, accessToken);
         setLiveDetails({ ...details, videoId });
         setChatMessages([]);
+        setYtPinnedMessage(null);
         setChatNextPageToken(undefined);
         
     } catch (err: any) {
@@ -456,11 +502,24 @@ const App: React.FC = () => {
       )
   };
 
+  // Send Main Message from Footer
   const handleSendMainMessage = () => {
       const mainMsg = messages.find(m => m.isMain);
-      if (mainMsg) {
-          handleSendMessage(mainMsg.id, mainMsg.text);
-      }
+      if (!mainMsg) return;
+      
+      setMainMessageStatus(SendingStatus.SENDING);
+      sendToYoutube(
+          mainMsg.text,
+          () => {
+              setMainMessageStatus(SendingStatus.SUCCESS);
+              setTimeout(() => setMainMessageStatus(SendingStatus.IDLE), 2000);
+          },
+          (err) => {
+              setMainMessageStatus(SendingStatus.ERROR);
+              alert('Помилка: ' + err);
+              setTimeout(() => setMainMessageStatus(SendingStatus.IDLE), 3000);
+          }
+      );
   };
 
   // Filter Messages
@@ -471,6 +530,7 @@ const App: React.FC = () => {
   });
 
   const hasMainMessage = messages.some(m => m.isMain);
+  const mainMessage = messages.find(m => m.isMain);
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-8 flex items-center justify-center relative">
@@ -501,8 +561,6 @@ const App: React.FC = () => {
                 connectionError={connectionError}
                 onConnect={handleConnect}
                 isLoadingChat={isLoadingChat}
-                hasMainMessage={hasMainMessage}
-                onSendMainMessage={handleSendMainMessage}
             />
 
             <div className="bg-slate-800/50 rounded-xl p-6 border border-slate-700/50 text-sm text-slate-400">
@@ -510,7 +568,7 @@ const App: React.FC = () => {
                 <ul className="list-disc list-inside space-y-1.5 text-xs">
                     <li>Використовуйте <strong className="text-purple-400">🏠</strong> щоб зробити повідомлення головним.</li>
                     <li>Вкладка <strong>Чат</strong> дозволяє бачити повідомлення глядачів у реальному часі.</li>
-                    <li>Нижня панель дозволяє швидко відправити будь-який текст без збереження.</li>
+                    <li>Кнопка <strong className="text-purple-400"><Home className="inline w-3 h-3" /></strong> внизу дозволяє миттєво відправити головне повідомлення.</li>
                 </ul>
             </div>
         </div>
@@ -539,7 +597,7 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Content Area */}
-                <div className="flex-grow overflow-hidden relative">
+                <div className="flex-grow overflow-hidden relative flex flex-col">
                     
                     {/* --- TAB: SAVED MESSAGES --- */}
                     {activeTab === 'saved' && (
@@ -601,6 +659,32 @@ const App: React.FC = () => {
                     {/* --- TAB: LIVE CHAT --- */}
                     {activeTab === 'chat' && (
                         <div className="absolute inset-0 flex flex-col bg-slate-900/50 pb-20">
+                            
+                            {/* Sticky Header: YouTube Pinned OR App Main Message */}
+                            {(ytPinnedMessage || mainMessage) && (
+                                <div className={`shrink-0 flex gap-3 p-3 text-sm border-b shadow-sm z-20 ${
+                                    ytPinnedMessage 
+                                        ? 'bg-slate-800 border-slate-700' 
+                                        : 'bg-purple-900/20 border-purple-900/40'
+                                }`}>
+                                    <div className="shrink-0 pt-0.5">
+                                        {ytPinnedMessage ? (
+                                            <Pin className="w-4 h-4 text-slate-400" />
+                                        ) : (
+                                            <Home className="w-4 h-4 text-purple-400" />
+                                        )}
+                                    </div>
+                                    <div className="flex-grow min-w-0">
+                                        <p className="text-[10px] uppercase tracking-wider font-bold opacity-60 mb-0.5">
+                                            {ytPinnedMessage ? 'Закріплено в чаті YouTube' : 'Головне повідомлення (App)'}
+                                        </p>
+                                        <p className="text-slate-200 truncate font-medium">
+                                            {ytPinnedMessage ? ytPinnedMessage.messageText : mainMessage?.text}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
                             {!liveDetails?.liveChatId ? (
                                 <div className="flex flex-col items-center justify-center h-full text-slate-500 p-6 text-center">
                                     <MessageSquare className="w-12 h-12 mb-2 opacity-20" />
@@ -612,7 +696,11 @@ const App: React.FC = () => {
                                     <p className="text-sm">Завантаження повідомлень...</p>
                                 </div>
                             ) : (
-                                <div className="flex-grow overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                                <div 
+                                    ref={chatContainerRef}
+                                    onScroll={handleChatScroll}
+                                    className="flex-grow overflow-y-auto p-4 space-y-3 custom-scrollbar scroll-smooth"
+                                >
                                     {chatMessages.map((msg) => (
                                         <div key={msg.id} className="flex gap-3 text-sm animate-in fade-in slide-in-from-bottom-1 duration-300">
                                             <div className="shrink-0">
@@ -633,15 +721,32 @@ const App: React.FC = () => {
                                             </div>
                                         </div>
                                     ))}
-                                    <div ref={chatEndRef} />
                                 </div>
                             )}
                         </div>
                     )}
 
                     {/* --- GLOBAL: QUICK SEND BAR (Persistent Footer) --- */}
-                    <div className="absolute bottom-0 left-0 right-0 p-3 bg-slate-800 border-t border-slate-700 z-10">
+                    <div className="absolute bottom-0 left-0 right-0 p-3 bg-slate-800 border-t border-slate-700 z-30">
                         <div className="flex gap-2">
+                            {/* Send Main Message Button */}
+                            <button
+                                onClick={handleSendMainMessage}
+                                disabled={!liveDetails?.liveChatId || !mainMessage || mainMessageStatus === SendingStatus.SENDING}
+                                className={`flex items-center justify-center w-10 h-10 rounded-lg transition-colors shrink-0 ${
+                                    mainMessageStatus === SendingStatus.SUCCESS ? 'bg-purple-600 text-white' :
+                                    mainMessageStatus === SendingStatus.ERROR ? 'bg-red-600 text-white' :
+                                    'bg-purple-600 hover:bg-purple-700 text-white disabled:bg-slate-700 disabled:text-slate-500'
+                                }`}
+                                title={mainMessage ? `Відправити головне: "${mainMessage.text}"` : "Немає головного повідомлення"}
+                            >
+                                {mainMessageStatus === SendingStatus.SENDING ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <Home className="w-4 h-4" />
+                                )}
+                            </button>
+
                             <input
                                 type="text"
                                 value={quickMessage}
@@ -651,10 +756,11 @@ const App: React.FC = () => {
                                 className="flex-grow bg-slate-900 border border-slate-700 rounded-lg py-2 px-3 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:outline-none placeholder-slate-600"
                                 disabled={!liveDetails?.liveChatId || quickMessageStatus === SendingStatus.SENDING}
                             />
+                            
                             <button
                                 onClick={handleSendQuickMessage}
                                 disabled={!liveDetails?.liveChatId || !quickMessage.trim() || quickMessageStatus === SendingStatus.SENDING}
-                                className={`flex items-center justify-center w-10 rounded-lg transition-colors ${
+                                className={`flex items-center justify-center w-10 h-10 rounded-lg transition-colors shrink-0 ${
                                     quickMessageStatus === SendingStatus.SUCCESS ? 'bg-green-600 text-white' :
                                     quickMessageStatus === SendingStatus.ERROR ? 'bg-red-600 text-white' :
                                     'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-slate-700 disabled:text-slate-500'
