@@ -3,7 +3,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { MessageSlot } from './components/MessageSlot';
 import { AppConfig, SavedMessage, MessageState, SendingStatus, LiveStreamDetails } from './types';
 import { STORAGE_KEYS, DEFAULT_MESSAGES } from './constants';
-import { extractVideoId, fetchLiveChatId, sendMessageToChat, refreshGoogleToken } from './services/youtubeService';
+import { extractVideoId, fetchLiveChatId, sendMessageToChat, refreshGoogleToken, exchangeCodeForTokens } from './services/youtubeService';
 import { MessageSquare, Zap, Plus, Trash2, Filter, Pin, Search, Undo, X } from 'lucide-react';
 
 // Declaration for Google Identity Services
@@ -125,7 +125,7 @@ const App: React.FC = () => {
     }
   };
 
-  // Google Auth Handler (Implicit Flow)
+  // Google Auth Handler
   const handleAuthorize = () => {
     if (!config.clientId) {
       setConnectionError("Будь ласка, введіть Client ID");
@@ -137,20 +137,59 @@ const App: React.FC = () => {
       return;
     }
 
+    // Determine strategy: 
+    // If Client Secret is present, use 'initCodeClient' (Authorization Code Flow) to get Refresh Token.
+    // If NOT present, use 'initTokenClient' (Implicit Flow) for just Access Token.
+    const useCodeFlow = !!config.clientSecret;
+
     try {
-      const client = window.google.accounts.oauth2.initTokenClient({
-        client_id: config.clientId,
-        scope: 'https://www.googleapis.com/auth/youtube.force-ssl',
-        callback: (response: any) => {
-          if (response.access_token) {
-            updateAccessToken(response.access_token);
-            setConnectionError(null);
-          } else {
-            setConnectionError("Не вдалося отримати токен доступу.");
-          }
-        },
-      });
-      client.requestAccessToken();
+      if (useCodeFlow) {
+        // --- Code Flow (Access + Refresh Token) ---
+        const client = window.google.accounts.oauth2.initCodeClient({
+          client_id: config.clientId,
+          scope: 'https://www.googleapis.com/auth/youtube.force-ssl',
+          ux_mode: 'popup',
+          select_account: true, // Forces account selection to ensure consent prompt for offline access
+          callback: async (response: any) => {
+            if (response.code) {
+              try {
+                // Exchange code for tokens
+                const data = await exchangeCodeForTokens(config.clientId, config.clientSecret, response.code);
+                
+                updateAccessToken(data.access_token);
+                if (data.refresh_token) {
+                  updateRefreshToken(data.refresh_token);
+                }
+                setConnectionError(null);
+              } catch (e: any) {
+                setConnectionError("Помилка обміну коду на токени: " + e.message);
+              }
+            } else {
+              setConnectionError("Користувач скасував авторизацію або виникла помилка.");
+            }
+          },
+        });
+        client.requestCode();
+      } else {
+        // --- Implicit Flow (Access Token Only) ---
+        // Fallback if user didn't provide Client Secret
+        const client = window.google.accounts.oauth2.initTokenClient({
+          client_id: config.clientId,
+          scope: 'https://www.googleapis.com/auth/youtube.force-ssl',
+          callback: (response: any) => {
+            if (response.access_token) {
+              updateAccessToken(response.access_token);
+              setConnectionError(null);
+              if (!config.clientSecret) {
+                alert("Увага: Без Client Secret ви отримали лише Access Token, який діє 1 годину. Для отримання Refresh Token заповніть поле Client Secret.");
+              }
+            } else {
+              setConnectionError("Не вдалося отримати токен доступу.");
+            }
+          },
+        });
+        client.requestAccessToken();
+      }
     } catch (e: any) {
       setConnectionError("Помилка ініціалізації OAuth: " + e.message);
     }

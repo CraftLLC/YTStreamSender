@@ -1,3 +1,4 @@
+
 export const extractVideoId = (url: string): string | null => {
   if (!url) return null;
 
@@ -111,4 +112,27 @@ export const refreshGoogleToken = async (clientId: string, clientSecret: string,
   }
 
   return await response.json(); // Returns { access_token, expires_in, scope, token_type }
+};
+
+export const exchangeCodeForTokens = async (clientId: string, clientSecret: string, code: string) => {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code: code,
+      grant_type: 'authorization_code',
+      redirect_uri: window.location.origin // Must match the origin where the request was initiated
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error_description || 'Не вдалося обміняти код на токени');
+  }
+
+  return await response.json(); // Returns { access_token, refresh_token, expires_in, ... }
 };
